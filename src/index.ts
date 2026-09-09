@@ -1,7 +1,6 @@
-import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type ExtensionAPI,
@@ -33,15 +32,7 @@ type PatchChunk = {
 	isEndOfFile: boolean;
 };
 
-export type FreeformToolFormat = {
-	type: "grammar";
-	syntax: "lark";
-	definition: string;
-};
-
-type ApplyPatchToolDefinition = ToolDefinition<typeof APPLY_PATCH_PARAMS, ApplyPatchToolDetails | undefined> & {
-	freeform: FreeformToolFormat;
-};
+type ApplyPatchToolDefinition = ToolDefinition<typeof APPLY_PATCH_PARAMS, ApplyPatchToolDetails | undefined>;
 
 export type ApplyPatchExtensionAPI = Pick<ExtensionAPI, "on" | "getActiveTools" | "setActiveTools"> & {
 	registerTool: (tool: ApplyPatchToolDefinition) => void;
@@ -178,8 +169,6 @@ function hasErrorCode(error: unknown, code: string): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
-const GPT_APPLY_PATCH_PROVIDERS = new Set(["openai", "openai-codex", "azure-openai-responses", "github-copilot"]);
-const GPT_APPLY_PATCH_APIS = new Set(["openai-responses", "openai-codex-responses"]);
 export const PATCH_PREVIEW_MAX_LINES = 16;
 export const PATCH_PREVIEW_MAX_CHARS = 4000;
 const PATCH_PREVIEW_HEAD_LINES = 8;
@@ -315,8 +304,8 @@ function normalizeApplyPatchArguments(args: unknown): ApplyPatchParams {
 }
 
 const STANDARD_EDIT_TOOL_NAMES = ["edit", "write"] as const;
-export const APPLY_PATCH_FREEFORM_DESCRIPTION =
-	"Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.";
+export const APPLY_PATCH_DESCRIPTION =
+	"Use apply_patch for file creation, updates, deletion, and moves. Supply the complete patch as the input string; when exposed as a grammar tool, supply the patch directly.";
 export const APPLY_PATCH_LARK_GRAMMAR = `start: begin_patch hunk+ end_patch
 begin_patch: "*** Begin Patch" LF
 end_patch: "*** End Patch" LF?
@@ -337,18 +326,6 @@ eof_line: "*** End of File" LF
 
 %import common.LF
 `;
-
-export function isOpenAIGptModel(
-	model: (Pick<Model<string>, "provider" | "id"> & Partial<Pick<Model<string>, "api">>) | undefined,
-): boolean {
-	if (!model?.id.startsWith("gpt-")) {
-		return false;
-	}
-
-	return (
-		GPT_APPLY_PATCH_PROVIDERS.has(model.provider) || (model.api !== undefined && GPT_APPLY_PATCH_APIS.has(model.api))
-	);
-}
 
 function normalizePatchText(patchText: string): string {
 	return patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -925,7 +902,7 @@ function parsePatch(patchText: string): ParsedPatch[] {
 	let index = beginIndex + 1;
 	while (index < endIndex) {
 		const line = lines[index] ?? "";
-		if (!line.startsWith("*** ")) {
+		if (line.trim() === "") {
 			index++;
 			continue;
 		}
@@ -1028,8 +1005,6 @@ function parsePatch(patchText: string): ParsedPatch[] {
 						oldLines.push(value);
 					} else if (prefix === "+") {
 						newLines.push(value);
-					} else if (parsedLines > 0) {
-						break;
 					} else {
 						throw new PatchParseError(
 							`Unexpected line found in update hunk: '${hunkLine}'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)`,
@@ -1136,51 +1111,87 @@ function replaceChunks(content: string, filePath: string, chunks: PatchChunk[]):
 	return { content: nextLines.join("\n"), fuzz };
 }
 
-async function applySingleHunk(
-	cwd: string,
-	hunk: ParsedPatch,
-): Promise<{ summary: string; appliedFile: string; fuzz: number }> {
+type PreparedOperation = {
+	hunk: ParsedPatch;
+	absolutePath: string;
+	destination: string;
+	content?: string;
+	fuzz: number;
+};
+
+async function requireAbsent(filePath: string): Promise<void> {
+	try {
+		await lstat(filePath);
+	} catch (error) {
+		if (hasErrorCode(error, "ENOENT")) return;
+		throw error;
+	}
+	throw Object.assign(new Error(`Target already exists: ${filePath}`), { code: "EEXIST" });
+}
+
+async function prepareOperation(cwd: string, hunk: ParsedPatch): Promise<PreparedOperation> {
 	const absolutePath = await resolvePatchPath(cwd, hunk.filePath);
-	const absoluteMovePath =
-		hunk.type === "update" && hunk.movePath ? await resolvePatchPath(cwd, hunk.movePath) : undefined;
-	const mutationPaths = absoluteMovePath ? [absolutePath, absoluteMovePath] : [absolutePath];
+	const destination =
+		hunk.type === "update" && hunk.movePath !== undefined ? await resolvePatchPath(cwd, hunk.movePath) : absolutePath;
+	if (hunk.type === "add") {
+		await requireAbsent(absolutePath);
+		return { hunk, absolutePath, destination, content: hunk.content, fuzz: 0 };
+	}
+	if (!(await stat(absolutePath)).isFile()) {
+		throw Object.assign(new Error(`Not a regular file: ${hunk.filePath}`), { code: "EISDIR" });
+	}
+	if (hunk.type === "delete") return { hunk, absolutePath, destination, fuzz: 0 };
+	if (hunk.movePath !== undefined) await requireAbsent(destination);
+	const currentContent = await readFile(absolutePath, "utf-8");
+	const result =
+		hunk.chunks.length === 0
+			? { content: currentContent, fuzz: 0 }
+			: replaceChunks(currentContent, hunk.filePath, hunk.chunks);
+	return { hunk, absolutePath, destination, ...result };
+}
 
-	return withPatchFileMutationQueues(mutationPaths, async () => {
-		if (hunk.type === "add") {
-			await mkdir(path.dirname(absolutePath), { recursive: true });
-			await writeFileAtomic(absolutePath, hunk.content);
-			return { summary: `add: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: 0 };
-		}
-
-		if (hunk.type === "delete") {
-			await stat(absolutePath);
+async function applyPreparedOperation(
+	cwd: string,
+	prepared: PreparedOperation,
+): Promise<{ summary: string; appliedFile: string }> {
+	const { hunk, absolutePath, destination, content } = prepared;
+	// Recheck paths before writing; external processes are not covered by Pi's queues.
+	await resolvePatchPath(cwd, hunk.filePath);
+	if (hunk.type === "delete") {
+		await rm(absolutePath);
+		return { summary: `delete: ${hunk.filePath}`, appliedFile: hunk.filePath };
+	}
+	if (content === undefined) throw new Error("Prepared file content is missing");
+	if (hunk.type === "add") await requireAbsent(absolutePath);
+	if (hunk.type === "update" && hunk.movePath !== undefined) {
+		await resolvePatchPath(cwd, hunk.movePath);
+		await requireAbsent(destination);
+	}
+	await mkdir(path.dirname(destination), { recursive: true });
+	await writeFileAtomic(destination, content);
+	if (hunk.type === "update" && hunk.movePath !== undefined) {
+		try {
 			await rm(absolutePath);
-			return { summary: `delete: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: 0 };
+		} catch (error) {
+			const failure = new Error(
+				`Move destination ${hunk.movePath} was written, but source ${hunk.filePath} could not be removed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			throw Object.assign(failure, { writtenDestination: hunk.movePath, code: "EIO" });
 		}
+		return { summary: `move: ${hunk.filePath} -> ${hunk.movePath}`, appliedFile: hunk.movePath };
+	}
+	return { summary: `${hunk.type}: ${hunk.filePath}`, appliedFile: hunk.filePath };
+}
 
-		const currentContent = await readFile(absolutePath, "utf-8");
-		const chunkResult =
-			hunk.chunks.length === 0
-				? { content: currentContent, fuzz: 0 }
-				: replaceChunks(currentContent, hunk.filePath, hunk.chunks);
-		const nextContent = chunkResult.content;
+function patchFailure(hunk: ParsedPatch, error: unknown): ApplyPatchFailure {
+	const message = error instanceof Error ? error.message : String(error);
+	const code =
+		error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+	return { filePath: hunk.filePath, operation: hunk.type, message, code };
+}
 
-		if (hunk.movePath && absoluteMovePath) {
-			await mkdir(path.dirname(absoluteMovePath), { recursive: true });
-			await writeFileAtomic(absoluteMovePath, nextContent);
-			if (absoluteMovePath !== absolutePath) {
-				await rm(absolutePath);
-			}
-			return {
-				summary: `move: ${hunk.filePath} -> ${hunk.movePath}`,
-				appliedFile: hunk.movePath,
-				fuzz: chunkResult.fuzz,
-			};
-		}
-
-		await writeFileAtomic(absolutePath, nextContent);
-		return { summary: `update: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: chunkResult.fuzz };
-	});
+function pathsOverlap(left: string, right: string): boolean {
+	return left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
 }
 
 export async function applyPatchDetailed(
@@ -1196,42 +1207,101 @@ async function applyParsedPatchDetailed(
 	hunks: ParsedPatch[],
 	onProgress?: ApplyPatchProgressCallback,
 ): Promise<ApplyPatchResult> {
-	const summaries: string[] = [];
-	const appliedFiles: string[] = [];
-	const failures: ApplyPatchFailure[] = [];
-	let fuzz = 0;
-
-	for (const hunk of hunks) {
-		try {
-			const { summary, appliedFile, fuzz: hunkFuzz } = await applySingleHunk(cwd, hunk);
-			summaries.push(summary);
-			appliedFiles.push(appliedFile);
-			fuzz += hunkFuzz;
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			const code =
-				error && typeof error === "object" && "code" in error && typeof error.code === "string"
-					? error.code
-					: undefined;
-			failures.push({ filePath: hunk.filePath, operation: hunk.type, message, code });
-		}
-		await notifyApplyPatchProgress(onProgress, {
-			applied: appliedFiles.length,
-			failed: failures.length,
-			total: hunks.length,
-		});
-	}
-
-	const result: ApplyPatchResult = {
-		summaries,
-		appliedFiles,
-		failures,
-		hasPartialSuccess: appliedFiles.length > 0 && failures.length > 0,
-		recoveryInstructions: { mustReadFiles: [], mustNotReadFiles: [], failedFiles: [] },
-		details: { fuzz },
-	};
-	result.recoveryInstructions = createRecoveryInstructions(result);
-	return result;
+	const root = await realpath(cwd);
+	// Reject case-only aliases conservatively on every filesystem.
+	const comparisonPath = (filePath: string): string => filePath.toLowerCase();
+	// Lock the whole workspace as well as paths used by other Pi mutation tools.
+	return withPatchFileMutationQueues(
+		[
+			root,
+			...hunks.flatMap((hunk) => [
+				path.resolve(root, hunk.filePath),
+				...(hunk.type === "update" && hunk.movePath !== undefined ? [path.resolve(root, hunk.movePath)] : []),
+			]),
+		],
+		async () => {
+			const summaries: string[] = [];
+			const appliedFiles: string[] = [];
+			const failures: ApplyPatchFailure[] = [];
+			const prepared: PreparedOperation[] = [];
+			const occupiedPaths: string[] = [];
+			const occupiedFiles = new Set<string>();
+			let fuzz = 0;
+			let completed = 0;
+			for (const hunk of hunks) {
+				try {
+					const operation = await prepareOperation(cwd, hunk);
+					const paths = [...new Set([operation.absolutePath, operation.destination])];
+					if (
+						paths.some((candidate) =>
+							occupiedPaths.some((other) => pathsOverlap(comparisonPath(candidate), other)),
+						) ||
+						(operation.absolutePath !== operation.destination &&
+							pathsOverlap(comparisonPath(operation.absolutePath), comparisonPath(operation.destination)))
+					) {
+						throw Object.assign(new Error(`Overlapping patch path: ${hunk.filePath}`), { code: "EINVAL" });
+					}
+					const fileIdentities: string[] = [];
+					for (const candidate of paths) {
+						try {
+							const info = await stat(candidate, { bigint: true });
+							const identity = `${info.dev}:${info.ino}`;
+							if (occupiedFiles.has(identity)) {
+								throw Object.assign(new Error(`Overlapping patch path: ${hunk.filePath}`), { code: "EINVAL" });
+							}
+							fileIdentities.push(identity);
+						} catch (error) {
+							if (!hasErrorCode(error, "ENOENT")) throw error;
+						}
+					}
+					for (const identity of fileIdentities) occupiedFiles.add(identity);
+					occupiedPaths.push(...paths.map(comparisonPath));
+					prepared.push(operation);
+				} catch (error) {
+					failures.push(patchFailure(hunk, error));
+				}
+			}
+			if (failures.length === 0) {
+				for (const operation of prepared) {
+					try {
+						const { summary, appliedFile } = await applyPreparedOperation(cwd, operation);
+						summaries.push(summary);
+						appliedFiles.push(appliedFile);
+						fuzz += operation.fuzz;
+						completed++;
+					} catch (error) {
+						failures.push(patchFailure(operation.hunk, error));
+						if (
+							error &&
+							typeof error === "object" &&
+							"writtenDestination" in error &&
+							typeof error.writtenDestination === "string"
+						) {
+							appliedFiles.push(error.writtenDestination);
+							summaries.push(`written move destination: ${error.writtenDestination}`);
+						}
+					}
+					await notifyApplyPatchProgress(onProgress, {
+						applied: completed,
+						failed: failures.length,
+						total: hunks.length,
+					});
+					if (failures.length > 0) break;
+				}
+			} else {
+				await notifyApplyPatchProgress(onProgress, { applied: 0, failed: failures.length, total: hunks.length });
+			}
+			const result: ApplyPatchResult = {
+				summaries,
+				appliedFiles,
+				failures,
+				hasPartialSuccess: appliedFiles.length > 0 && failures.length > 0,
+				recoveryInstructions: createRecoveryInstructions({ appliedFiles, failures }),
+				details: { fuzz },
+			};
+			return result;
+		},
+	);
 }
 
 function isRereadCandidate(failure: ApplyPatchFailure): boolean {
@@ -1252,38 +1322,11 @@ function createRecoveryInstructions(
 }
 
 export async function applyPatch(cwd: string, patchText: string): Promise<string[]> {
-	const hunks = parseNonEmptyPatch(patchText);
-
-	const summaries: string[] = [];
-	const appliedFiles: string[] = [];
-	for (const hunk of hunks) {
-		try {
-			const { summary, appliedFile } = await applySingleHunk(cwd, hunk);
-			summaries.push(summary);
-			appliedFiles.push(appliedFile);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			const code =
-				error && typeof error === "object" && "code" in error && typeof error.code === "string"
-					? error.code
-					: undefined;
-			const failure = { filePath: hunk.filePath, operation: hunk.type, message, code } satisfies ApplyPatchFailure;
-			const result: ApplyPatchResult = {
-				summaries,
-				appliedFiles,
-				failures: [failure],
-				hasPartialSuccess: appliedFiles.length > 0,
-				recoveryInstructions: createRecoveryInstructions({
-					appliedFiles,
-					failures: [failure],
-				}),
-				details: { fuzz: 0 },
-			};
-			throw new ApplyPatchError(message, result);
-		}
+	const result = await applyPatchDetailed(cwd, patchText);
+	if (result.failures.length > 0) {
+		throw new ApplyPatchError(result.failures.map((failure) => failure.message).join("\n"), result);
 	}
-
-	return summaries;
+	return result.summaries;
 }
 
 async function createPendingPatchUpdate(
@@ -1338,22 +1381,49 @@ function replaceEditToolsWithApplyPatch(toolNames: string[]): string[] {
 	return [...withoutExtensionManagedEditTools(toolNames), "apply_patch"];
 }
 
-function replaceApplyPatchWithEditTools(toolNames: string[]): string[] {
-	return [...withoutExtensionManagedEditTools(toolNames), ...STANDARD_EDIT_TOOL_NAMES];
-}
-
-function resolvePatchPath(cwd: string, filePath: string): string {
-	return path.resolve(cwd, filePath);
+async function resolvePatchPath(cwd: string, filePath: string): Promise<string> {
+	const lexicalRoot = path.resolve(cwd);
+	const root = await realpath(lexicalRoot);
+	const lexicalPrefix = lexicalRoot.endsWith(path.sep) ? lexicalRoot : lexicalRoot + path.sep;
+	const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
+	const absolute = path.isAbsolute(filePath) ? filePath : lexicalPrefix + filePath;
+	const prefix = absolute.startsWith(lexicalPrefix) ? lexicalPrefix : rootPrefix;
+	if (!absolute.startsWith(prefix)) {
+		throw Object.assign(new Error(`Patch path escapes workspace: ${filePath}`), { code: "EPERM" });
+	}
+	let target = root;
+	const segments = absolute.slice(prefix.length).split(path.sep);
+	for (let index = 0; index < segments.length; index++) {
+		const segment = segments[index];
+		if (!segment || segment === ".") continue;
+		target = path.resolve(target, segment);
+		const relative = path.relative(root, target);
+		if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+			throw Object.assign(new Error(`Patch path escapes workspace: ${filePath}`), { code: "EPERM" });
+		}
+		try {
+			const info = await lstat(target);
+			if (info.isSymbolicLink()) {
+				throw Object.assign(new Error(`Symlink patch path is not allowed: ${filePath}`), { code: "EPERM" });
+			}
+			if (index < segments.length - 1 && !info.isDirectory()) {
+				throw Object.assign(new Error(`Not a directory in patch path: ${filePath}`), { code: "ENOTDIR" });
+			}
+		} catch (error) {
+			if (!hasErrorCode(error, "ENOENT")) throw error;
+		}
+	}
+	if (target === root)
+		throw Object.assign(new Error(`Patch path is the workspace root: ${filePath}`), { code: "EINVAL" });
+	return target;
 }
 
 async function canonicalMutationPath(filePath: string): Promise<string> {
 	try {
 		return await realpath(filePath);
-	} catch (error) {
-		if (hasErrorCode(error, "ENOENT")) {
-			return path.resolve(filePath);
-		}
-		throw error;
+	} catch {
+		// Validation inside the queue reports missing, invalid, and inaccessible paths.
+		return path.resolve(filePath);
 	}
 }
 
@@ -1372,30 +1442,23 @@ async function withPatchFileMutationQueues<T>(filePaths: string[], operation: ()
 	return runQueued(0);
 }
 
-function syncToolset(
-	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools">,
-	model: Model<string> | undefined,
-): void {
-	const currentToolNames = pi.getActiveTools();
-	if (isOpenAIGptModel(model)) {
-		pi.setActiveTools(replaceEditToolsWithApplyPatch(currentToolNames));
-		return;
-	}
-
-	pi.setActiveTools(replaceApplyPatchWithEditTools(currentToolNames));
+function syncToolset(pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools">): void {
+	pi.setActiveTools(replaceEditToolsWithApplyPatch(pi.getActiveTools()));
 }
 
 export function createApplyPatchTool(): ApplyPatchToolDefinition {
 	const tool = defineTool({
 		name: "apply_patch",
 		label: "ApplyPatch",
-		description: APPLY_PATCH_FREEFORM_DESCRIPTION,
+		description: APPLY_PATCH_DESCRIPTION,
 		parameters: APPLY_PATCH_PARAMS,
+		constrainedSampling: { type: "grammar", variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR } },
 		prepareArguments: normalizeApplyPatchArguments,
 		promptSnippet: "Apply Codex-format file patches with apply_patch",
 		promptGuidelines: [
 			"Use apply_patch for file edits instead of mutating files through bash, Python scripts, heredocs, or shell redirection.",
-			"After apply_patch succeeds, do not re-read the edited files just to confirm the patch applied.",
+			"Before patching an existing file, read the relevant region first.",
+			"If a patch fails, re-read the relevant permitted target region and generate a new patch. Never retry the same failed patch unchanged.",
 		],
 		async execute(
 			_toolCallId,
@@ -1465,6 +1528,7 @@ export function createApplyPatchTool(): ApplyPatchToolDefinition {
 								result.appliedFiles.length > 0
 									? "Earlier file actions in this patch were already applied."
 									: "No file actions were applied.",
+								"Recovery: regenerate the patch; never retry the same failed patch unchanged.",
 								result.recoveryInstructions.mustNotReadFiles.length > 0
 									? "Recovery: MUST NOT reread other files from this patch unless a specific dependency requires it."
 									: "",
@@ -1530,28 +1594,22 @@ export function createApplyPatchTool(): ApplyPatchToolDefinition {
 		},
 	});
 
-	return Object.assign(tool, {
-		freeform: {
-			type: "grammar",
-			syntax: "lark",
-			definition: APPLY_PATCH_LARK_GRAMMAR,
-		} satisfies FreeformToolFormat,
-	});
+	return tool;
 }
 
 export function registerApplyPatchExtension(pi: ApplyPatchExtensionAPI): void {
 	pi.registerTool(createApplyPatchTool());
 
-	pi.on("session_start", async (_event, ctx) => {
-		syncToolset(pi, ctx.model);
+	pi.on("session_start", async () => {
+		syncToolset(pi);
 	});
 
-	pi.on("model_select", async (event) => {
-		syncToolset(pi, event.model);
+	pi.on("model_select", async () => {
+		syncToolset(pi);
 	});
 
-	pi.on("before_agent_start", async (_event, ctx) => {
-		syncToolset(pi, ctx.model);
+	pi.on("before_agent_start", async () => {
+		syncToolset(pi);
 	});
 }
 

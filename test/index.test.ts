@@ -2,15 +2,13 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	APPLY_PATCH_FREEFORM_DESCRIPTION,
+	APPLY_PATCH_DESCRIPTION,
 	APPLY_PATCH_LARK_GRAMMAR,
 	type ApplyPatchExtensionAPI,
 	applyPatch,
 	applyPatchDetailed,
 	createApplyPatchTool,
 	extractPatchedPaths,
-	type FreeformToolFormat,
-	isOpenAIGptModel,
 	PatchParseError,
 	registerApplyPatchExtension,
 	truncatePreview,
@@ -101,16 +99,16 @@ afterEach(async () => {
 });
 
 describe("pi-apply-patch", () => {
-	it("#given extension #when registered #then exposes codex freeform apply_patch tool", () => {
+	it("#given extension #when registered #then exposes hybrid apply_patch tool", () => {
 		// given
 		let capturedToolName: string | undefined;
 		let capturedDescription: string | undefined;
-		let capturedFreeform: FreeformToolFormat | undefined;
+		let capturedSampling: ApplyPatchTool["constrainedSampling"];
 		const extensionApi = {
 			registerTool(tool: ReturnType<typeof createApplyPatchTool>) {
 				capturedToolName = tool.name;
 				capturedDescription = tool.description;
-				capturedFreeform = tool.freeform;
+				capturedSampling = tool.constrainedSampling;
 			},
 			on() {},
 			getActiveTools() {
@@ -124,15 +122,14 @@ describe("pi-apply-patch", () => {
 
 		// then
 		expect(capturedToolName).toBe("apply_patch");
-		expect(capturedDescription).toBe(APPLY_PATCH_FREEFORM_DESCRIPTION);
-		expect(capturedFreeform).toEqual({
+		expect(capturedDescription).toBe(APPLY_PATCH_DESCRIPTION);
+		expect(capturedSampling).toEqual({
 			type: "grammar",
-			syntax: "lark",
-			definition: APPLY_PATCH_LARK_GRAMMAR,
+			variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
 		});
 	});
 
-	it("#given GPT model after reload with apply_patch already active #when session starts #then keeps apply_patch active", async () => {
+	it("#given active patch model after reload with apply_patch already active #when session starts #then keeps apply_patch active", async () => {
 		// given
 		const harness = createToolsetTestApi(["read", "bash", "apply_patch"]);
 		registerApplyPatchExtension(harness.api);
@@ -145,7 +142,7 @@ describe("pi-apply-patch", () => {
 		expect(harness.getSetActiveToolsCalls()).toEqual([["read", "bash", "apply_patch"]]);
 	});
 
-	it("#given GPT model with stale edit tools #when session starts #then normalizes to apply_patch only", async () => {
+	it("#given active patch model with stale edit tools #when session starts #then normalizes to apply_patch only", async () => {
 		// given
 		const harness = createToolsetTestApi(["read", "apply_patch", "edit", "write"]);
 		registerApplyPatchExtension(harness.api);
@@ -157,7 +154,7 @@ describe("pi-apply-patch", () => {
 		expect(harness.getActiveTools()).toEqual(["read", "apply_patch"]);
 	});
 
-	it("#given custom Responses provider with GPT model #when session starts #then enables apply_patch", async () => {
+	it("#given custom Responses provider with active patch model #when session starts #then enables apply_patch", async () => {
 		// given
 		const harness = createToolsetTestApi(["read", "edit", "write"]);
 		registerApplyPatchExtension(harness.api);
@@ -173,7 +170,7 @@ describe("pi-apply-patch", () => {
 		expect(harness.getActiveTools()).toEqual(["read", "apply_patch"]);
 	});
 
-	it("#given non GPT model and no original edit tools #when session starts #then restores standard edit tools", async () => {
+	it("#given non active patch model and no original edit tools #when session starts #then keeps apply_patch active", async () => {
 		// given
 		const harness = createToolsetTestApi(["read", "apply_patch"]);
 		registerApplyPatchExtension(harness.api);
@@ -182,10 +179,10 @@ describe("pi-apply-patch", () => {
 		await harness.trigger("session_start", { provider: "anthropic", id: "claude-sonnet-4" });
 
 		// then
-		expect(harness.getActiveTools()).toEqual(["read", "edit", "write"]);
+		expect(harness.getActiveTools()).toEqual(["read", "apply_patch"]);
 	});
 
-	it("#given external tool change in GPT mode #when agent starts #then reconciles before model request", async () => {
+	it("#given external tool change in active patch mode #when agent starts #then reconciles before model request", async () => {
 		// given
 		const harness = createToolsetTestApi(["read", "edit", "write"]);
 		registerApplyPatchExtension(harness.api);
@@ -199,7 +196,7 @@ describe("pi-apply-patch", () => {
 		expect(harness.getActiveTools()).toEqual(["read", "apply_patch"]);
 	});
 
-	it("#given GPT mode #when model switches to non GPT #then apply_patch is replaced with edit tools", async () => {
+	it("#given active patch mode #when model switches to Claude #then apply_patch remains active", async () => {
 		// given
 		const harness = createToolsetTestApi(["read", "edit", "write"]);
 		registerApplyPatchExtension(harness.api);
@@ -209,7 +206,7 @@ describe("pi-apply-patch", () => {
 		await harness.trigger("model_select", { provider: "anthropic", id: "claude-sonnet-4" });
 
 		// then
-		expect(harness.getActiveTools()).toEqual(["read", "edit", "write"]);
+		expect(harness.getActiveTools()).toEqual(["read", "apply_patch"]);
 	});
 
 	it("#given raw codex patch #when executed #then applies file update", async () => {
@@ -230,7 +227,7 @@ describe("pi-apply-patch", () => {
 		expect(await readFile(path.join(directory, "sample.txt"), "utf-8")).toBe("after\n");
 	});
 
-	it("#given parent traversal path #when applying patch #then applies outside cwd", async () => {
+	it("#given parent traversal path #when applying patch #then rejects outside cwd", async () => {
 		// given
 		const directory = await createTempDirectory();
 		const outsidePath = path.join(path.dirname(directory), `${path.basename(directory)}-outside.ts`);
@@ -245,13 +242,13 @@ describe("pi-apply-patch", () => {
 *** End Patch`;
 
 		// when
-		await applyPatch(directory, patch);
+		await expect(applyPatch(directory, patch)).rejects.toThrow("escapes workspace");
 
 		// then
-		expect(await readFile(outsidePath, "utf-8")).toBe("changed\n");
+		expect(await readFile(outsidePath, "utf-8")).toBe("outside\n");
 	});
 
-	it("#given absolute path outside cwd #when applying patch #then applies outside cwd", async () => {
+	it("#given absolute path outside cwd #when applying patch #then rejects outside cwd", async () => {
 		// given
 		const directory = await createTempDirectory();
 		const outsidePath = path.join(path.dirname(directory), `${path.basename(directory)}-absolute.ts`);
@@ -265,10 +262,10 @@ describe("pi-apply-patch", () => {
 *** End Patch`;
 
 		// when
-		await applyPatch(directory, patch);
+		await expect(applyPatch(directory, patch)).rejects.toThrow("escapes workspace");
 
 		// then
-		expect(await readFile(outsidePath, "utf-8")).toBe("changed\n");
+		expect(await readFile(outsidePath, "utf-8")).toBe("outside\n");
 	});
 
 	it("#given apply_patch tool execution #when started #then emits pending TUI diff update", async () => {
@@ -517,7 +514,7 @@ describe("pi-apply-patch", () => {
 		expect(await readFile(path.join(directory, "second.txt"), "utf-8")).toBe("TWO\n");
 	});
 
-	it("#given add patch overwriting existing file #when started #then pending diff shows removed content", async () => {
+	it("#given add targeting existing file #when executed #then preserves existing content", async () => {
 		// given
 		const directory = await createTempDirectory();
 		await writeFile(path.join(directory, "existing.txt"), "old\n", "utf-8");
@@ -545,7 +542,7 @@ describe("pi-apply-patch", () => {
 		expect(updates[0]).toContain("• Edited existing.txt (+1 -1)");
 		expect(updates[0]).toContain("-1 old");
 		expect(updates[0]).toContain("+1 new");
-		expect(await readFile(path.join(directory, "existing.txt"), "utf-8")).toBe("new\n");
+		expect(await readFile(path.join(directory, "existing.txt"), "utf-8")).toBe("old\n");
 	});
 
 	it("#given codex multi operation freeform patch #when executed #then applies all operations", async () => {
@@ -727,7 +724,7 @@ EOF`;
 		expect(await readFile(path.join(directory, "new.txt"), "utf-8")).toBe("no trailing newline");
 	});
 
-	it("#given absolute path outside cwd #when executed #then applies patch", async () => {
+	it("#given absolute path outside cwd #when executed #then rejects the path", async () => {
 		// given
 		const directory = await createTempDirectory();
 		const outsidePath = path.join(path.dirname(directory), `${path.basename(directory)}-outside-apply-patch.txt`);
@@ -738,13 +735,13 @@ EOF`;
 *** End Patch`;
 
 		// when
-		await applyPatch(directory, patch);
+		await expect(applyPatch(directory, patch)).rejects.toThrow("escapes workspace");
 
 		// then
-		expect(await readFile(outsidePath, "utf-8")).toBe("outside\n");
+		await expect(readFile(outsidePath, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
-	it("#given symlink escaping cwd #when executed #then applies patch", async () => {
+	it("#given symlink escaping cwd #when executed #then rejects the path", async () => {
 		// given
 		const directory = await createTempDirectory();
 		const outsideDirectory = await createTempDirectory();
@@ -755,10 +752,12 @@ EOF`;
 *** End Patch`;
 
 		// when
-		await applyPatch(directory, patch);
+		await expect(applyPatch(directory, patch)).rejects.toThrow("Symlink");
 
 		// then
-		expect(await readFile(path.join(outsideDirectory, "outside.txt"), "utf-8")).toBe("outside\n");
+		await expect(readFile(path.join(outsideDirectory, "outside.txt"), "utf-8")).rejects.toMatchObject({
+			code: "ENOENT",
+		});
 	});
 
 	it("#given empty codex patch #when applying #then throws typed parse error", async () => {
@@ -798,7 +797,7 @@ EOF`;
 		await expect(applyPatch(directory, patch)).rejects.toThrow("Failed to find expected lines in modify.txt");
 	});
 
-	it("#given partial patch failure #when applying detailed #then accumulates applied and failed files", async () => {
+	it("#given later validation failure #when applying detailed #then leaves every file unchanged", async () => {
 		// given
 		const directory = await createTempDirectory();
 		await writeFile(path.join(directory, "ok.txt"), "before\n", "utf-8");
@@ -818,11 +817,12 @@ EOF`;
 		const result = await applyPatchDetailed(directory, patch);
 
 		// then
-		expect(result.appliedFiles).toEqual(["ok.txt"]);
+		expect(result.appliedFiles).toEqual([]);
+		expect(await readFile(path.join(directory, "ok.txt"), "utf-8")).toBe("before\n");
 		expect(result.failures).toHaveLength(1);
 		expect(result.failures[0]?.filePath).toBe("broken.txt");
 		expect(result.recoveryInstructions.mustReadFiles).toEqual(["broken.txt"]);
-		expect(result.recoveryInstructions.mustNotReadFiles).toEqual(["ok.txt"]);
+		expect(result.recoveryInstructions.mustNotReadFiles).toEqual([]);
 	});
 
 	it("#given partial patch failure #when applying compat api #then fails fast after first error", async () => {
@@ -870,7 +870,7 @@ EOF`;
 		expect(result.details.fuzz).toBe(10001);
 	});
 
-	it("#given apply patch tool partial failure #when executed #then returns recovery instructions text", async () => {
+	it("#given apply patch validation failure #when executed #then returns recovery instructions without writes", async () => {
 		// given
 		const directory = await createTempDirectory();
 		await writeFile(path.join(directory, "ok.txt"), "before\n", "utf-8");
@@ -893,14 +893,12 @@ EOF`;
 
 		// then
 		const text = result.content.find((block) => block.type === "text")?.text ?? "";
-		expect(text).toContain("apply_patch partially failed.");
+		expect(text).toContain("apply_patch failed.");
 		expect(text).toContain("Failed:");
 		expect(text).toContain("- broken.txt (update):");
 		expect(text).toContain("Recovery: MUST read broken.txt before retrying.");
-		expect(text).toContain("Earlier file actions in this patch were already applied.");
-		expect(text).toContain(
-			"Recovery: MUST NOT reread other files from this patch unless a specific dependency requires it.",
-		);
+		expect(text).toContain("No file actions were applied.");
+		expect(await readFile(path.join(directory, "ok.txt"), "utf-8")).toBe("before\n");
 	});
 
 	it("#given apply patch tool complete failure #when executed #then does not report partial failure", async () => {
@@ -1097,14 +1095,22 @@ EOF`;
 		expect(extractPatchedPaths(patch)).toEqual(["src/app.ts", "src/new.ts", "src/old.ts", "src/moved.ts"]);
 	});
 
-	it("#given model metadata #when checking GPT activation #then matches known providers and Responses APIs", () => {
-		expect(isOpenAIGptModel({ provider: "openai", id: "gpt-5" })).toBe(true);
-		expect(isOpenAIGptModel({ provider: "openai-codex", id: "gpt-5.5" })).toBe(true);
-		expect(isOpenAIGptModel({ provider: "my-proxy", id: "gpt-5", api: "openai-responses" })).toBe(true);
-		expect(isOpenAIGptModel({ provider: "codex-proxy", id: "gpt-5", api: "openai-codex-responses" })).toBe(true);
-		expect(isOpenAIGptModel({ provider: "openai", id: "o1" })).toBe(false);
-		expect(isOpenAIGptModel({ provider: "anthropic", id: "gpt-5" })).toBe(false);
-		expect(isOpenAIGptModel({ provider: "my-proxy", id: "claude-sonnet", api: "openai-responses" })).toBe(false);
-		expect(isOpenAIGptModel({ provider: "anthropic-proxy", id: "gpt-5", api: "anthropic-messages" })).toBe(false);
+	it.each([
+		{ provider: "anthropic", id: "claude-sonnet" },
+		{ provider: "google", id: "gemini" },
+		{ provider: "deepseek", id: "deepseek-chat" },
+		{ provider: "moonshot", id: "kimi" },
+		{ provider: "zai", id: "glm" },
+		{ provider: "qwen", id: "qwen" },
+		{ provider: "openai", id: "gpt-5" },
+		undefined,
+	])("#given model %j #when lifecycle events fire #then keeps only apply_patch for edits", async (model) => {
+		const harness = createToolsetTestApi(["read", "bash", "grep", "edit", "write"]);
+		registerApplyPatchExtension(harness.api);
+		for (const event of ["session_start", "model_select", "before_agent_start"]) {
+			harness.setActiveTools(["read", "bash", "grep", "edit", "write"]);
+			await harness.trigger(event, model);
+			expect(harness.getActiveTools()).toEqual(["read", "bash", "grep", "apply_patch"]);
+		}
 	});
 });

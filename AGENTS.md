@@ -21,9 +21,9 @@ Conventions for human contributors and AI agents working on this repository.
 ## Constraints
 
 - No Bun APIs. Runtime is Node only.
-- This extension registers the `apply_patch` tool and only activates it for OpenAI GPT-family models.
-- Keep the tool schema, grammar, and descriptions byte-for-byte compatible with Codex unless intentionally updating the golden source.
-- No dependency on pi-coding-agent internal modules outside the documented public extension API in `@mariozechner/pi-coding-agent`.
+- This extension registers `apply_patch` for every model, replacing native edit/write tools. Target Pi >=0.85.1 and use capability-based constrainedSampling with JSON fallback.
+- Keep the Codex patch grammar and JSON input schema stable. The tool description intentionally supports both grammar and JSON calls.
+- No dependency on pi-coding-agent internal modules outside the documented public extension API in `@earendil-works/pi-coding-agent`.
 
 ## Don'ts
 

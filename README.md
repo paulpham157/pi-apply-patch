@@ -1,91 +1,48 @@
 # pi-apply-patch
 
-Codex-style `apply_patch` tool extension for the [pi coding agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent). It registers a freeform grammar patch tool for OpenAI GPT-family models and swaps out `write` / `edit` while those models are active.
+One `apply_patch` tool for all model families in Pi **0.85.1 or later**. It replaces native `edit` and `write`, including after model switches, while preserving other active tools such as `bash`.
 
-## Behavior
-
-The extension registers one LLM-callable tool: `apply_patch`. The tool accepts Codex patch envelopes and applies file additions, updates, deletions, and moves after resolving file paths against the current workspace.
-
-| Case | Result |
-|------|--------|
-| OpenAI GPT provider active | replaces `write` and `edit` with `apply_patch` |
-| Custom `openai-responses` GPT provider active | replaces `write` and `edit` with `apply_patch` |
-| Non-GPT model active | restores the original `write` and `edit` toolset |
-| Raw freeform patch input | accepted and applied |
-| JSON `{ "input": "..." }` patch input | accepted and applied |
-| Absolute or parent-escaping path | accepted and resolved by Node path semantics |
-
-## Tool
-
-### `apply_patch`
-
-Use this tool to edit files with the Codex patch format.
-
-```text
-*** Begin Patch
-*** Add File: hello.txt
-+Hello world
-*** Update File: src/app.py
-@@ def greet():
--print("Hi")
-+print("Hello, world!")
-*** Delete File: obsolete.txt
-*** End Patch
-```
-
-Pi exposes this as a freeform grammar tool. Models with `compat.supportsOpenAIGrammarTools` enabled receive an OpenAI custom grammar tool; other Responses-compatible models fall back to a function tool with an `input` string.
-
-Custom provider names are supported when the model id starts with `gpt-` and its Pi API is `openai-responses` or `openai-codex-responses`. For example, a model registered as `my-proxy/gpt-5` with `api: "openai-responses"` activates `apply_patch` without adding the provider name to a hard-coded allowlist.
-
-## Installation
-
-The package targets the [`pi`](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) coding agent. Pi loads extensions from `~/.pi/agent/extensions/`, project `.pi/extensions/`, or via the `--extension` / `-e` CLI flag.
+## Usage
 
 ```bash
-# 1. From npm (once published)
-pi install npm:@code-yeongyu/pi-apply-patch
-
-# 2. From git
-pi install git:github.com/code-yeongyu/pi-apply-patch
-
-# 3. Manual placement
-git clone https://github.com/code-yeongyu/pi-apply-patch ~/.pi/agent/extensions/pi-apply-patch
-cd ~/.pi/agent/extensions/pi-apply-patch && npm install
-
-# 4. Dev / one-shot test
-pi -e /path/to/pi-apply-patch/src/index.ts
+npm install
+pi -e ./src/index.ts
 ```
 
-After installation, restart pi or run `/reload` inside an interactive session.
+Reload an already running Pi session with `/reload` after changing the extension.
+
+Provider capability determines the transport: Pi uses the unchanged Codex grammar where supported and a JSON function tool elsewhere. Both use the same patch engine. Tool availability does not guarantee equal patch quality across models.
+
+```json
+{"input":"*** Begin Patch\n*** Add File: hello.txt\n+Hello world\n*** End Patch"}
+```
+
+Grammar calls supply the patch directly. Patches support additions, updates, deletions, and moves; matching retains exact, trailing-whitespace, trimmed, and Unicode-normalized fallback behavior.
+
+## File rules
+
+- The session `cwd` is the workspace boundary. Absolute paths inside it are allowed. Paths outside it and paths through any symlink inside the workspace are rejected. The workspace root itself is canonicalized so OS directory aliases can still be used as `cwd`.
+- Every operation is validated before writes begin. A syntax, path, or context error leaves every file unchanged.
+- `Add File` and move destinations must not exist. Use `Update File` for existing files.
+- Separate operations cannot overlap source or destination paths, including ancestor paths and existing file aliases. Names differing only by case are treated as overlapping even on case-sensitive filesystems. One update may contain multiple hunks and an attached `Move to`.
+- Writes stop on the first filesystem error. There is no whole-patch rollback, and external processes can race filesystem checks. Confinement applies to this tool; `bash` remains unrestricted.
+
+Read the relevant region before patching an existing file. After failure, inspect the reported error, re-read the relevant permitted region, and generate a corrected patch; do not retry the same failed patch unchanged.
 
 ## Development
 
 ```bash
-npm install
 npm test
-npm run typecheck
 npm run check
 npm pack --dry-run
-pi -e ./src/index.ts
 ```
 
-The test suite uses vitest. TypeScript is strict, Node-only, and uses ESM imports with `.js` suffixes.
+TypeScript strict mode, Node >=22, ESM imports with `.js` suffixes, tabs, double quotes. Tests cover tool registration/lifecycle and filesystem behavior. Live provider calls require separate verification; local tests do not establish model output quality.
 
-## Origin
+Design decisions are in [docs/adr](docs/adr); vocabulary is in [CONTEXT.md](CONTEXT.md).
 
-Ported from `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch.ts` in `code-yeongyu/senpi-mono`. The patch grammar and tool descriptions mirror Codex.
+## Origin and license
 
-## License
+Forked from [code-yeongyu/pi-apply-patch](https://github.com/code-yeongyu/pi-apply-patch), originally extracted from `code-yeongyu/senpi-mono`. The patch grammar is retained; activation, transport metadata, descriptions, and file safety intentionally differ.
 
 [MIT](LICENSE).
-
-## Related
-
-- [senpi](https://github.com/code-yeongyu/senpi) — the fork/runtime these extensions are extracted from.
-- [Ultraworkers Discord](https://discord.gg/PUwSMR9XNk) — community link from the senpi README.
-- [Dori](https://sisyphuslabs.ai) — the product powered by senpi under the hood.
-
-## Acknowledgements
-
-- **Mario Zechner** ([@badlogic](https://github.com/badlogic)) — author of [pi-mono](https://github.com/badlogic/pi-mono) and the pi-coding-agent extension API this package targets.
-- **OpenAI Codex** — reference `apply_patch` tool grammar and patch language.
