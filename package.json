@@ -1,6 +1,6 @@
 {
 	"name": "pi-apply-patch",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "Universal apply_patch extension for Pi with capability-based grammar and JSON tools.",
 	"type": "module",
 	"license": "MIT",
