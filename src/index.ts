@@ -304,8 +304,46 @@ function normalizeApplyPatchArguments(args: unknown): ApplyPatchParams {
 }
 
 const STANDARD_EDIT_TOOL_NAMES = ["edit", "write"] as const;
-export const APPLY_PATCH_DESCRIPTION =
-	"Use apply_patch for file creation, updates, deletion, and moves. Supply the complete patch as the input string; when exposed as a grammar tool, supply the patch directly.";
+export const APPLY_PATCH_DESCRIPTION = String.raw`Use apply_patch for file creation, updates, deletion, and moves.
+For JSON function calls, put the entire patch in the input string, with JSON-escaped newlines:
+{"input":"*** Begin Patch\n*** Add File: example.txt\n+hello patch\n*** End Patch"}
+For grammar calls, supply the patch text directly. Do not include Markdown fences in the patch.
+
+Patch rules:
+- Start with *** Begin Patch and finish with *** End Patch.
+- Add File: every content line starts with +, including empty lines (a lone +).
+- Update File: use @@ hunks; prefix context lines with a space, removed lines with -, and added lines with +.
+- Direct move/rename IS supported: use *** Update File: source immediately followed by *** Move to: destination. There is no *** Move File header and no arrow syntax. For a move without content changes, omit @@ hunks. Do not replace a supported direct move with Add + Delete.
+- Delete File needs only its header.
+- Paths must stay inside cwd and must not pass through symlinks. Add and move destinations must not exist. Separate operations must not overlap paths.
+- Read existing files before patching. Validation errors apply nothing; write-time errors can leave changes. Use the reported result to regenerate a corrected patch, never retry the same failed patch unchanged.
+
+Examples below are separate calls in order, starting with absent example.txt and renamed-example.txt.
+
+Create:
+*** Begin Patch
+*** Add File: example.txt
++hello patch
+*** End Patch
+
+Update:
+*** Begin Patch
+*** Update File: example.txt
+@@
+-hello patch
++hello universal patch
+*** End Patch
+
+Move without changing content:
+*** Begin Patch
+*** Update File: example.txt
+*** Move to: renamed-example.txt
+*** End Patch
+
+Delete:
+*** Begin Patch
+*** Delete File: renamed-example.txt
+*** End Patch`;
 export const APPLY_PATCH_LARK_GRAMMAR = `start: begin_patch hunk+ end_patch
 begin_patch: "*** Begin Patch" LF
 end_patch: "*** End Patch" LF?
@@ -917,7 +955,9 @@ function parsePatch(patchText: string): ParsedPatch[] {
 					break;
 				}
 				if (!nextLine.startsWith("+")) {
-					throw new PatchParseError(`Invalid patch format: Add File lines must start with '+'`);
+					throw new PatchParseError(
+						`Invalid patch format: Add File lines must start with '+', including empty lines (a lone +). Example content line: +hello patch`,
+					);
 				}
 				contentLines.push(nextLine.slice(1));
 				index++;
@@ -1032,7 +1072,7 @@ function parsePatch(patchText: string): ParsedPatch[] {
 		}
 
 		throw new PatchParseError(
-			`'${line}' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'`,
+			`'${line}' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'. Direct moves are supported using Update File followed immediately by Move to; for a move without content changes, omit @@ hunks:\n*** Begin Patch\n*** Update File: source-path\n*** Move to: destination-path\n*** End Patch`,
 		);
 	}
 
@@ -1458,6 +1498,7 @@ export function createApplyPatchTool(): ApplyPatchToolDefinition {
 		promptGuidelines: [
 			"Use apply_patch for file edits instead of mutating files through bash, Python scripts, heredocs, or shell redirection.",
 			"Before patching an existing file, read the relevant region first.",
+			"For a direct move, use Update File followed immediately by Move to. Do not use a Move File header or substitute Add + Delete.",
 			"If a patch fails, re-read the relevant permitted target region and generate a new patch. Never retry the same failed patch unchanged.",
 		],
 		async execute(

@@ -782,6 +782,37 @@ EOF`;
 		await expect(applyPatch(directory, patch)).rejects.toThrow("is not a valid hunk header");
 	});
 
+	it("#given unsupported Move File syntax #when rejected #then explains direct move syntax and preserves files", async () => {
+		const directory = await createTempDirectory();
+		await writeFile(path.join(directory, "source.txt"), "keep me\n");
+		const patch = `*** Begin Patch
+*** Move File: source.txt -> destination.txt
+*** End Patch`;
+		await expect(applyPatch(directory, patch)).rejects.toThrow(
+			"*** Update File: source-path\n*** Move to: destination-path",
+		);
+		expect(await readFile(path.join(directory, "source.txt"), "utf-8")).toBe("keep me\n");
+		await expect(readFile(path.join(directory, "destination.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("#given tool description examples #when applied in order #then create update move and delete work", async () => {
+		const directory = await createTempDirectory();
+		const examples = [
+			...createApplyPatchTool().description.matchAll(/\*\*\* Begin Patch\n[\s\S]*?\*\*\* End Patch/g),
+		].map((match) => match[0]);
+		expect(examples).toHaveLength(4);
+		const expectedSummaries = [
+			["add: example.txt"],
+			["update: example.txt"],
+			["move: example.txt -> renamed-example.txt"],
+			["delete: renamed-example.txt"],
+		];
+		for (const [index, example] of examples.entries()) {
+			expect(await applyPatch(directory, example)).toEqual(expectedSummaries[index]);
+		}
+		expect(await readdir(directory)).toEqual([]);
+	});
+
 	it("#given missing codex context #when executed #then reports expected lines", async () => {
 		// given
 		const directory = await createTempDirectory();
