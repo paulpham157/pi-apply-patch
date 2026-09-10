@@ -1,8 +1,7 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
+  # Pushes to main are validated once through publish.yml's workflow_call.
   pull_request:
     branches: [main]
   workflow_dispatch:
