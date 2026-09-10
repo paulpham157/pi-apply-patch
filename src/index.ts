@@ -1422,11 +1422,13 @@ function replaceEditToolsWithApplyPatch(toolNames: string[]): string[] {
 }
 
 async function resolvePatchPath(cwd: string, filePath: string): Promise<string> {
+	// Windows accepts both separators. Do not normalize away `..` before inspecting each component.
+	const patchPath = path.sep === "\\" ? filePath.replaceAll("/", "\\") : filePath;
 	const lexicalRoot = path.resolve(cwd);
 	const root = await realpath(lexicalRoot);
 	const lexicalPrefix = lexicalRoot.endsWith(path.sep) ? lexicalRoot : lexicalRoot + path.sep;
 	const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
-	const absolute = path.isAbsolute(filePath) ? filePath : lexicalPrefix + filePath;
+	const absolute = path.isAbsolute(patchPath) ? patchPath : lexicalPrefix + patchPath;
 	const prefix = absolute.startsWith(lexicalPrefix) ? lexicalPrefix : rootPrefix;
 	if (!absolute.startsWith(prefix)) {
 		throw Object.assign(new Error(`Patch path escapes workspace: ${filePath}`), { code: "EPERM" });

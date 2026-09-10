@@ -13,30 +13,33 @@ afterEach(async () => {
 	await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-it.each(["alias/file.txt", "alias/../new.txt", "file-link.txt", "dangling.txt"])(
-	"#given symlink path %s #when validating #then rejects without any writes",
-	async (target) => {
-		const cwd = await workspace();
-		await mkdir(path.join(cwd, "real"));
-		await writeFile(path.join(cwd, "real/file.txt"), "original\n");
-		await symlink("real", path.join(cwd, "alias"), "dir");
-		await symlink("real/file.txt", path.join(cwd, "file-link.txt"), "file");
-		await symlink("absent", path.join(cwd, "dangling.txt"), "file");
-		const result = await applyPatchDetailed(
-			cwd,
-			`*** Begin Patch
+it.each([
+	"alias/file.txt",
+	"alias/../new.txt",
+	"file-link.txt",
+	"dangling.txt",
+	...(process.platform === "win32" ? ["alias\\file.txt", "alias\\../new.txt", "alias/..\\new.txt"] : []),
+])("#given symlink path %s #when validating #then rejects without any writes", async (target) => {
+	const cwd = await workspace();
+	await mkdir(path.join(cwd, "real"));
+	await writeFile(path.join(cwd, "real/file.txt"), "original\n");
+	await symlink("real", path.join(cwd, "alias"), "dir");
+	await symlink("real/file.txt", path.join(cwd, "file-link.txt"), "file");
+	await symlink("absent", path.join(cwd, "dangling.txt"), "file");
+	const result = await applyPatchDetailed(
+		cwd,
+		`*** Begin Patch
 *** Add File: first.txt
 +first
 *** Add File: ${target}
 +new
 *** End Patch`,
-		);
-		expect(result.failures[0]?.message).toContain("Symlink");
-		expect(result.appliedFiles).toEqual([]);
-		await expect(readFile(path.join(cwd, "first.txt"))).rejects.toMatchObject({ code: "ENOENT" });
-		expect(await readFile(path.join(cwd, "real/file.txt"), "utf8")).toBe("original\n");
-	},
-);
+	);
+	expect(result.failures[0]?.message).toContain("Symlink");
+	expect(result.appliedFiles).toEqual([]);
+	await expect(readFile(path.join(cwd, "first.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+	expect(await readFile(path.join(cwd, "real/file.txt"), "utf8")).toBe("original\n");
+});
 
 it.each(["existing.txt", "link/file.txt", "../outside.txt"])(
 	"#given disallowed move destination %s #when validating #then preserves source and other files",
