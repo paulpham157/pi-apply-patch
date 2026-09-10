@@ -1,33 +1,33 @@
 # apply-patch
 
-Một `apply_patch` cho mọi model trên Pi: GPT, Claude, Gemini, DeepSeek, Kimi, GLM, Qwen và các model khác. Extension thay `edit`/`write`, tự chọn grammar hoặc JSON function tool theo khả năng của provider.
+One `apply_patch` for every model on Pi: GPT, Claude, Gemini, DeepSeek, Kimi, GLM, Qwen, and others. The extension replaces `edit`/`write`, choosing the grammar or JSON function tool based on provider capability.
 
 Repo: [https://github.com/paulpham157/pi-apply-patch](https://github.com/paulpham157/pi-apply-patch)
 
-## Cài đặt
+## Install
 
-Yêu cầu Pi >=0.85.1 và Node >=22.
+Requires Pi >=0.85.1 and Node >=22.
 
 ```bash
 pi install npm:@paulpham157/apply-patch
 ```
 
-Nếu Pi đang chạy, dùng `/reload`. Extension tự kích hoạt và tiếp tục hoạt động khi đổi model.
+If Pi is running, use `/reload`. The extension activates automatically and keeps working across model switches.
 
-## Chức năng
+## Features
 
-- Tạo, sửa, xóa và move file bằng cùng một patch tool.
-- Giới hạn đường dẫn trong `cwd`, từ chối symlink, đích đã tồn tại khi tạo/move và các thao tác chồng đường dẫn.
-- Kiểm tra toàn bộ patch trước khi ghi; không rollback toàn bộ nếu xảy ra lỗi filesystem lúc ghi.
+- Create, edit, delete, and move files with a single patch tool.
+- Confines paths to `cwd`; rejects symlinks, existing destinations on create/move, and overlapping path operations.
+- Validates the full patch before writing; no full rollback on filesystem write errors.
 
-Đọc file trước khi sửa; nếu patch lỗi, đọc lại vùng liên quan rồi tạo patch mới. Chất lượng sử dụng patch tùy model. `bash` vẫn hoạt động và không chịu giới hạn đường dẫn của tool này.
+Read a file before editing it; on patch failure, re-read the relevant region and generate a new patch. Patch usage quality varies by model. `bash` still works and is not subject to this tool's path limits.
 
-## Đóng góp và hỗ trợ
+## Contributing and support
 
-Đọc [CONTRIBUTION.md](CONTRIBUTION.md), [AGENTS.md](AGENTS.md) và chạy các test cần thiết trước khi tạo PR. Hướng dẫn [live test với Pi](docs/live-testing.md) và [phát hành](docs/releasing.md).
+Read [CONTRIBUTION.md](CONTRIBUTION.md), [AGENTS.md](AGENTS.md), and run the required tests before opening a PR. See [live testing with Pi](docs/live-testing.md) and [releasing](docs/releasing.md).
 
-Có vấn đề? Tạo issue ở [Đây](https://github.com/paulpham157/pi-apply-patch/issues/new/choose), kèm phiên bản Pi, provider/model và cách tái hiện lỗi. Không đính kèm API key.
+Issues? Open one [here](https://github.com/paulpham157/pi-apply-patch/issues/new/choose) with the Pi version, provider/model, and reproduction steps. Do not attach API keys.
 
-Tạo nhanh: [Báo lỗi](https://github.com/paulpham157/pi-apply-patch/issues/new?template=bug.yml) · [Lỗi model/provider](https://github.com/paulpham157/pi-apply-patch/issues/new?template=compatibility.yml) · [Đề xuất tính năng](https://github.com/paulpham157/pi-apply-patch/issues/new?template=feature.yml).
+Quick create: [Bug report](https://github.com/paulpham157/pi-apply-patch/issues/new?template=bug.yml) · [Model/provider issue](https://github.com/paulpham157/pi-apply-patch/issues/new?template=compatibility.yml) · [Feature request](https://github.com/paulpham157/pi-apply-patch/issues/new?template=feature.yml).
 
-Fork từ [code-yeongyu/pi-apply-patch](https://github.com/code-yeongyu/pi-apply-patch). Giấy phép [MIT](LICENSE).
+Forked from [code-yeongyu/pi-apply-patch](https://github.com/code-yeongyu/pi-apply-patch): at the time, upstream had no updates for ~2 months and only supported `gpt-*` models, so this fork was created for personal use. [MIT](LICENSE) license.
