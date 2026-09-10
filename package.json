@@ -36,7 +36,8 @@
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"check": "tsgo --noEmit && biome check .",
-		"release": "semantic-release"
+		"release": "semantic-release",
+		"test:pi": "node scripts/pi-live-smoke.mjs"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-agent-core": ">=0.85.1",
@@ -66,8 +67,11 @@
 	},
 	"files": [
 		"src/",
+		"scripts/",
 		"docs/",
 		"README.md",
+		"CONTRIBUTION.md",
+		"AGENTS.md",
 		"LICENSE",
 		"NOTICE",
 		"CHANGELOG.md"

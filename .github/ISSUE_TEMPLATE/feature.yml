@@ -1,27 +1,28 @@
-name: Feature Request
-description: Propose an apply_patch behavior or compatibility improvement
+name: Đề xuất tính năng
+description: Đề xuất cải tiến chức năng hoặc trải nghiệm sử dụng
+title: "[Feature]: "
 labels: [enhancement]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What workflow is blocked or awkward today?
+      label: Vấn đề cần giải quyết
+      description: Quy trình nào đang bị cản trở? Không gửi thông tin bí mật.
     validations:
       required: true
 
   - type: textarea
     id: proposal
     attributes:
-      label: Proposal
-      description: What should pi-apply-patch do? Concrete tool behavior helps.
+      label: Đề xuất
+      description: Mô tả hành vi mong muốn của apply-patch và một ví dụ sử dụng.
     validations:
       required: true
 
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives considered
-      description: What else could solve this?
+      label: Phương án khác đã cân nhắc
+      description: Có cách nào khác để giải quyết nhu cầu này không?
     validations:
       required: false

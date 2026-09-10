@@ -1,0 +1,54 @@
+name: Lỗi tương thích model/provider
+description: Model không gọi được apply_patch hoặc gặp lỗi grammar/JSON tool
+title: "[Compatibility]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Dùng form này cho lỗi riêng của model/provider. Không gửi API key, token, auth.json hay địa chỉ gateway riêng tư.
+  - type: input
+    id: model
+    attributes:
+      label: Provider và model ID chính xác
+      placeholder: provider/model-id
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Phiên bản extension, Pi, Node.js và hệ điều hành
+    validations:
+      required: true
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Giao thức API
+      options:
+        - Không rõ
+        - OpenAI Chat Completions
+        - OpenAI Responses
+        - Anthropic Messages
+        - Google Generative AI
+        - Khác
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Prompt và cách tái hiện
+      description: Ghi thao tác lỗi (create/update/move/delete), lệnh chạy Pi và kết quả mong đợi.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Kết quả thực tế và bằng chứng
+      description: Thông báo lỗi, tool được gọi, patch hoặc report live test đã loại thông tin bí mật. Ghi rõ nếu model tự sửa patch sau lỗi.
+    validations:
+      required: true
+  - type: textarea
+    id: comparison
+    attributes:
+      label: So sánh với model khác
+      description: Model nào chạy được cùng thao tác? Để trống nếu chưa thử.

@@ -6,3 +6,6 @@ coverage/
 
 # Sisyphus working files at project root only
 /.sisyphus/
+
+# Local live-model smoke report
+/pi-smoke-report.json
