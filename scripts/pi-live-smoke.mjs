@@ -162,6 +162,7 @@ async function main() {
 		console.log("No API calls. Add --live to use your configured Pi credentials (provider charges may apply).");
 		return;
 	}
+	await import("node:fs/promises").then(({ mkdir }) => mkdir(path.dirname(report), { recursive: true }));
 	const cli = resolvePiCli();
 	const results = [];
 	for (const entry of models) {
