@@ -1,0 +1,26 @@
+name: PR title
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate Conventional Commit title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          node <<'NODE'
+          const title = process.env.PR_TITLE;
+          if (!/^(feat|fix|perf|docs|style|refactor|test|build|ci|chore|revert)(\([^()\r\n]+\))?!?: \S[^\r\n]*$/.test(title)) {
+            console.error('Use a Conventional Commit PR title, e.g. fix: handle Windows paths');
+            process.exit(1);
+          }
+          NODE

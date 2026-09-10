@@ -19,9 +19,9 @@ it.each(["alias/file.txt", "alias/../new.txt", "file-link.txt", "dangling.txt"])
 		const cwd = await workspace();
 		await mkdir(path.join(cwd, "real"));
 		await writeFile(path.join(cwd, "real/file.txt"), "original\n");
-		await symlink("real", path.join(cwd, "alias"));
-		await symlink("real/file.txt", path.join(cwd, "file-link.txt"));
-		await symlink("absent", path.join(cwd, "dangling.txt"));
+		await symlink("real", path.join(cwd, "alias"), "dir");
+		await symlink("real/file.txt", path.join(cwd, "file-link.txt"), "file");
+		await symlink("absent", path.join(cwd, "dangling.txt"), "file");
 		const result = await applyPatchDetailed(
 			cwd,
 			`*** Begin Patch
@@ -44,7 +44,7 @@ it.each(["existing.txt", "link/file.txt", "../outside.txt"])(
 		const cwd = await workspace();
 		await writeFile(path.join(cwd, "source.txt"), "source\n");
 		await writeFile(path.join(cwd, "existing.txt"), "existing\n");
-		await symlink(".", path.join(cwd, "link"));
+		await symlink(".", path.join(cwd, "link"), "dir");
 		await expect(
 			applyPatch(
 				cwd,

@@ -1,8 +1,22 @@
-# pi-apply-patch
+# apply-patch
 
-One `apply_patch` tool for all model families in Pi **0.85.1 or later**. It replaces native `edit` and `write`, including after model switches, while preserving other active tools such as `bash`.
+[Repository](https://github.com/paulpham157/pi-apply-patch) · [Issues](https://github.com/paulpham157/pi-apply-patch/issues)
 
-## Usage
+Universal `apply_patch` for **every model on Pi**, not just the `gpt-*` family. In the spirit of Pi's model-agnostic workflow, use the same patch tool with GPT, Claude, Gemini, DeepSeek, Kimi, GLM, Qwen, Muse, and other models available through Pi providers.
+
+There is no model-name or provider allowlist. On Pi **0.85.1 or later**, the extension replaces native `edit` and `write` and stays active when you switch models, while preserving other active tools such as `bash`. Providers with grammar support receive grammar calls; others use the same patch engine through a standard JSON function tool.
+
+## Installation
+
+Requires Pi >=0.85.1 and Node >=22. Install the published package:
+
+```bash
+pi install npm:@paulpham157/apply-patch
+```
+
+To pin this release, use `pi install npm:@paulpham157/apply-patch@0.1.3`.
+
+## Local development
 
 ```bash
 npm install
@@ -40,6 +54,10 @@ npm pack --dry-run
 TypeScript strict mode, Node >=22, ESM imports with `.js` suffixes, tabs, double quotes. Tests cover tool registration/lifecycle and filesystem behavior. Live provider calls require separate verification; local tests do not establish model output quality.
 
 Design decisions are in [docs/adr](docs/adr); vocabulary is in [CONTEXT.md](CONTEXT.md).
+
+## Releases
+
+After CI passes on Ubuntu, macOS, and Windows, semantic-release analyzes Conventional Commits on main, selects the next version, publishes to npm, and creates a GitHub Release when needed. See [release setup and recovery](docs/releasing.md) for the required npm Trusted Publisher configuration.
 
 ## Origin and license
 
