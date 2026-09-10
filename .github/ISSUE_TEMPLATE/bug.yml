@@ -1,25 +1,26 @@
-name: Bug Report
-description: Report broken apply_patch registration, parsing, or patch execution
+name: Báo lỗi
+description: Báo lỗi cài đặt, phân tích patch hoặc thao tác file
+title: "[Bug]: "
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Keep this concise. Include the patch body, model, and pi command needed to reproduce.
+        Cung cấp ví dụ tối thiểu. Xóa API key, token, dữ liệu riêng tư và địa chỉ gateway nội bộ khỏi log trước khi gửi.
 
   - type: textarea
     id: what
     attributes:
-      label: What happened?
-      description: Include exact output/errors.
+      label: Lỗi gặp phải
+      description: Ghi rõ thông báo lỗi hoặc output thực tế.
     validations:
       required: true
 
   - type: textarea
     id: patch
     attributes:
-      label: Patch input
-      description: Paste a minimal patch envelope that reproduces the issue.
+      label: Patch gây lỗi
+      description: Dán patch tối thiểu nếu có; giữ nguyên dấu xuống dòng và cú pháp.
       render: text
     validations:
       required: false
@@ -27,22 +28,50 @@ body:
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: Kết quả mong đợi
     validations:
       required: true
 
   - type: input
     id: version
     attributes:
-      label: pi-apply-patch version
-      placeholder: 0.1.0
+      label: Phiên bản @paulpham157/apply-patch
+      placeholder: "Ví dụ: 0.1.3; ghi không rõ nếu chưa xác định được"
     validations:
-      required: false
+      required: true
 
   - type: input
     id: pi-version
     attributes:
-      label: pi-coding-agent version
-      placeholder: 0.71.0
+      label: Phiên bản Pi và Node.js
+      description: Kết quả của pi --version và node --version.
     validations:
-      required: false
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Hệ điều hành
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Khác
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Provider và model ID
+      description: Ghi N/A nếu lỗi xảy ra trước khi chọn model.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Các bước tái hiện
+      description: Lệnh cài/chạy Pi, nội dung file ban đầu và các bước dẫn đến lỗi. Nếu có extension khác, liệt kê tên.
+    validations:
+      required: true
