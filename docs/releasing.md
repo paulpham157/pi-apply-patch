@@ -33,6 +33,8 @@ The workflow uses OIDC with `id-token: write`; no npm token or interactive OTP i
 
 ## Version history and artifacts
 
+The scoped package was published manually before this CI migration: [`@paulpham157/apply-patch@0.1.3`](https://www.npmjs.com/package/@paulpham157/apply-patch/v/0.1.3). Verify it with `npm view @paulpham157/apply-patch@0.1.3 name version gitHead`. A `ci:` squash commit for this migration intentionally does not republish that existing version; installation already works. Subsequent `fix:` or `feat:` commits trigger new releases.
+
 The already published npm version `0.1.3` reports gitHead `74d55c8036927e5da578a86f3ca31338baa43680`. The workflow establishes a local `v0.1.3` baseline tag at that commit if absent and rejects a conflicting tag. This prevents semantic-release from treating the package as an unversioned first release. Its next release pushes the baseline with the release tags.
 
 semantic-release updates package metadata in the publishing workspace, publishes npm, and creates a GitHub Release with generated notes. It does not commit version bumps or changelog updates to main. `package.json` on main remains a development baseline; npm has the released version. `CHANGELOG.md` retains historical entries; new release notes live in GitHub Releases.
