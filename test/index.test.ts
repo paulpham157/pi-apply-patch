@@ -1144,4 +1144,203 @@ EOF`;
 			expect(harness.getActiveTools()).toEqual(["read", "bash", "grep", "apply_patch"]);
 		}
 	});
+
+	it("#given dry-run update #when executed #then leaves file unchanged and returns preview", async () => {
+		// given
+		const directory = await createTempDirectory();
+		await writeFile(path.join(directory, "sample.txt"), "before\n", "utf-8");
+		const patch = `*** Begin Patch
+*** Update File: sample.txt
+@@
+-before
++after
+*** End Patch`;
+		const tool = createApplyPatchTool();
+
+		// when
+		const result = await tool.execute(
+			"apply-patch-dry-run-test",
+			{ input: patch, dryRun: true },
+			undefined,
+			undefined,
+			{ cwd: directory } as never,
+		);
+
+		// then
+		expect(await readFile(path.join(directory, "sample.txt"), "utf-8")).toBe("before\n");
+		const text = result.content
+			.filter((block) => block.type === "text")
+			.map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
+			.join("\n");
+		expect(text).toContain("sample.txt");
+		expect(text).toContain("+1 after");
+	});
+
+	it.each([
+		{
+			name: "add",
+			setup: async (_directory: string) => {},
+			patch: `*** Begin Patch
+*** Add File: created.txt
++created
+*** End Patch`,
+			assertUntouched: async (directory: string) => {
+				await expect(readFile(path.join(directory, "created.txt"), "utf-8")).rejects.toThrow();
+			},
+			expectPreview: "created.txt",
+		},
+		{
+			name: "delete",
+			setup: async (directory: string) => {
+				await writeFile(path.join(directory, "doomed.txt"), "bye\n", "utf-8");
+			},
+			patch: `*** Begin Patch
+*** Delete File: doomed.txt
+*** End Patch`,
+			assertUntouched: async (directory: string) => {
+				expect(await readFile(path.join(directory, "doomed.txt"), "utf-8")).toBe("bye\n");
+			},
+			expectPreview: "doomed.txt",
+		},
+		{
+			name: "move",
+			setup: async (directory: string) => {
+				await writeFile(path.join(directory, "old.txt"), "same\n", "utf-8");
+			},
+			patch: `*** Begin Patch
+*** Update File: old.txt
+*** Move to: new.txt
+*** End Patch`,
+			assertUntouched: async (directory: string) => {
+				expect(await readFile(path.join(directory, "old.txt"), "utf-8")).toBe("same\n");
+				await expect(readFile(path.join(directory, "new.txt"), "utf-8")).rejects.toThrow();
+			},
+			expectPreview: "new.txt",
+		},
+	])("#given dry-run $name #when executed #then leaves filesystem untouched and returns preview", async (row) => {
+		// given
+		const directory = await createTempDirectory();
+		await row.setup(directory);
+		const tool = createApplyPatchTool();
+
+		// when
+		const result = await tool.execute(
+			`apply-patch-dry-run-${row.name}-test`,
+			{ input: row.patch, dryRun: true },
+			undefined,
+			undefined,
+			{ cwd: directory } as never,
+		);
+
+		// then
+		await row.assertUntouched(directory);
+		const text = result.content
+			.filter((block) => block.type === "text")
+			.map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
+			.join("\n");
+		expect(text).toContain("Dry-run preview");
+		expect(text).toContain(row.expectPreview);
+	});
+
+	it("#given dry-run invalid patch #when executed #then returns failure output without writing", async () => {
+		// given
+		const directory = await createTempDirectory();
+		await writeFile(path.join(directory, "sample.txt"), "before\n", "utf-8");
+		const patch = `*** Begin Patch
+*** Update File: sample.txt
+@@
+-missing
++after
+*** End Patch`;
+		const tool = createApplyPatchTool();
+
+		// when
+		const [dryResult, realResult] = await Promise.all([
+			tool.execute("apply-patch-dry-run-invalid-test", { input: patch, dryRun: true }, undefined, undefined, {
+				cwd: directory,
+			} as never),
+			(async () => {
+				const otherDirectory = await createTempDirectory();
+				await writeFile(path.join(otherDirectory, "sample.txt"), "before\n", "utf-8");
+				return tool.execute("apply-patch-real-invalid-test", { input: patch }, undefined, undefined, {
+					cwd: otherDirectory,
+				} as never);
+			})(),
+		]);
+
+		// then
+		expect(await readFile(path.join(directory, "sample.txt"), "utf-8")).toBe("before\n");
+		const dryText = dryResult.content
+			.filter((block) => block.type === "text")
+			.map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
+			.join("\n");
+		const realText = realResult.content
+			.filter((block) => block.type === "text")
+			.map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
+			.join("\n");
+		expect(dryText).toBe(realText);
+		expect(dryText).toContain("apply_patch failed.");
+	});
+
+	it("#given dry-run no-op update #when executed #then names the validated file without writing", async () => {
+		// given
+		const directory = await createTempDirectory();
+		await writeFile(path.join(directory, "sample.txt"), "same\n", "utf-8");
+		const patch = `*** Begin Patch
+*** Update File: sample.txt
+@@
+ same
+*** End Patch`;
+		const tool = createApplyPatchTool();
+
+		// when
+		const result = await tool.execute(
+			"apply-patch-dry-run-noop-test",
+			{ input: patch, dryRun: true },
+			undefined,
+			undefined,
+			{ cwd: directory } as never,
+		);
+
+		// then
+		expect(await readFile(path.join(directory, "sample.txt"), "utf-8")).toBe("same\n");
+		const text = result.content
+			.filter((block) => block.type === "text")
+			.map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
+			.join("\n");
+		expect(text).toContain("Dry-run preview");
+		expect(text).toContain("sample.txt");
+	});
+
+	it.each([undefined, false])(
+		"#given dryRun %s #when executed #then applies files unchanged from before",
+		async (dryRun) => {
+			// given
+			const directory = await createTempDirectory();
+			await writeFile(path.join(directory, "sample.txt"), "before\n", "utf-8");
+			const patch = `*** Begin Patch
+*** Update File: sample.txt
+@@
+-before
++after
+*** End Patch`;
+			const tool = createApplyPatchTool();
+			const args = dryRun === undefined ? { input: patch } : { input: patch, dryRun };
+
+			// when
+			await tool.execute("apply-patch-compat-test", args, undefined, undefined, { cwd: directory } as never);
+
+			// then
+			expect(await readFile(path.join(directory, "sample.txt"), "utf-8")).toBe("after\n");
+		},
+	);
+
+	it("#given tool description #when read #then documents dry-run", () => {
+		// given / when
+		const description = APPLY_PATCH_DESCRIPTION;
+
+		// then
+		expect(description).toContain('"dryRun":true');
+		expect(description).toContain("without changing any file");
+	});
 });

@@ -18,6 +18,11 @@ const APPLY_PATCH_PARAMS = Type.Object({
 	input: Type.String({
 		description: "The entire contents of the apply_patch command",
 	}),
+	dryRun: Type.Optional(
+		Type.Boolean({
+			description: "Validate and preview without writing: return the dry-run preview and leave every file unchanged",
+		}),
+	),
 });
 
 type ParsedPatch =
@@ -40,6 +45,7 @@ export type ApplyPatchExtensionAPI = Pick<ExtensionAPI, "on" | "getActiveTools" 
 
 type ApplyPatchParams = {
 	input: string;
+	dryRun?: boolean;
 };
 
 type ApplyPatchOperation = "add" | "delete" | "update";
@@ -63,6 +69,7 @@ type ApplyPatchToolDetails = {
 	preview?: ApplyPatchPreview;
 	progress?: ApplyPatchProgress;
 	result?: ApplyPatchResult;
+	dryRun?: boolean;
 };
 
 type ApplyPatchProgress = {
@@ -290,23 +297,25 @@ export function truncatePreview(text: string): string {
 
 function normalizeApplyPatchArguments(args: unknown): ApplyPatchParams {
 	if (typeof args === "string") {
-		return { input: args };
+		return { input: args, dryRun: false };
 	}
 
 	if (args && typeof args === "object" && "input" in args) {
 		const input = (args as { input?: unknown }).input;
 		if (typeof input === "string") {
-			return { input };
+			const dryRun = (args as { dryRun?: unknown }).dryRun;
+			return { input, dryRun: dryRun === true };
 		}
 	}
 
-	return { input: "" };
+	return { input: "", dryRun: false };
 }
 
 const STANDARD_EDIT_TOOL_NAMES = ["edit", "write"] as const;
 export const APPLY_PATCH_DESCRIPTION = String.raw`Use apply_patch for file creation, updates, deletion, and moves.
 For JSON function calls, put the entire patch in the input string, with JSON-escaped newlines:
 {"input":"*** Begin Patch\n*** Add File: example.txt\n+hello patch\n*** End Patch"}
+For a validation-only preview, add "dryRun": true: {"input":"*** Begin Patch\n*** Add File: example.txt\n+hello patch\n*** End Patch","dryRun":true}. Dry-run calls return the preview without changing any file.
 For grammar calls, supply the patch text directly. Do not include Markdown fences in the patch.
 
 Patch rules:
@@ -1230,6 +1239,17 @@ function patchFailure(hunk: ParsedPatch, error: unknown): ApplyPatchFailure {
 	return { filePath: hunk.filePath, operation: hunk.type, message, code };
 }
 
+function describePreparedOperation(operation: PreparedOperation): string {
+	const { hunk } = operation;
+	if (hunk.type === "delete") {
+		return `delete: ${hunk.filePath}`;
+	}
+	if (hunk.type === "update" && hunk.movePath !== undefined) {
+		return `move: ${hunk.filePath} -> ${hunk.movePath}`;
+	}
+	return `${hunk.type}: ${hunk.filePath}`;
+}
+
 function pathsOverlap(left: string, right: string): boolean {
 	return left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
 }
@@ -1246,6 +1266,7 @@ async function applyParsedPatchDetailed(
 	cwd: string,
 	hunks: ParsedPatch[],
 	onProgress?: ApplyPatchProgressCallback,
+	dryRun = false,
 ): Promise<ApplyPatchResult> {
 	const root = await realpath(cwd);
 	// Reject case-only aliases conservatively on every filesystem.
@@ -1301,7 +1322,7 @@ async function applyParsedPatchDetailed(
 					failures.push(patchFailure(hunk, error));
 				}
 			}
-			if (failures.length === 0) {
+			if (failures.length === 0 && !dryRun) {
 				for (const operation of prepared) {
 					try {
 						const { summary, appliedFile } = await applyPreparedOperation(cwd, operation);
@@ -1327,6 +1348,17 @@ async function applyParsedPatchDetailed(
 						total: hunks.length,
 					});
 					if (failures.length > 0) break;
+				}
+			} else if (failures.length === 0 && dryRun) {
+				for (const operation of prepared) {
+					summaries.push(describePreparedOperation(operation));
+					fuzz += operation.fuzz;
+					completed++;
+					await notifyApplyPatchProgress(onProgress, {
+						applied: completed,
+						failed: failures.length,
+						total: hunks.length,
+					});
 				}
 			} else {
 				await notifyApplyPatchProgress(onProgress, { applied: 0, failed: failures.length, total: hunks.length });
@@ -1552,6 +1584,7 @@ export function createApplyPatchTool(): ApplyPatchToolDefinition {
 						details: progressUpdate.details,
 					});
 				},
+				normalizedParams.dryRun === true,
 			);
 			if (result.failures.length > 0) {
 				const failureLines = result.failures.map(
@@ -1580,10 +1613,20 @@ export function createApplyPatchTool(): ApplyPatchToolDefinition {
 								.join("\n"),
 						},
 					],
-					details: preview ? { preview, result } : { result },
+					details: preview
+						? { preview, result, dryRun: normalizedParams.dryRun === true }
+						: { result, dryRun: normalizedParams.dryRun === true },
 				};
 			}
 
+			if (normalizedParams.dryRun === true) {
+				const previewText =
+					preview !== undefined ? formatPatchPreview(preview, ctx.cwd) : result.summaries.join("\n");
+				return {
+					content: [{ type: "text", text: `Dry-run preview\n${previewText}` }],
+					details: preview ? { preview, result, dryRun: true } : { result, dryRun: true },
+				};
+			}
 			return {
 				content: [{ type: "text", text: result.summaries.join("\n") }],
 				details: preview ? { preview, result } : { result },

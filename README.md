@@ -4,6 +4,16 @@ One `apply_patch` for every model on Pi: GPT, Claude, Gemini, DeepSeek, Kimi, GL
 
 Repo: [https://github.com/paulpham157/pi-apply-patch](https://github.com/paulpham157/pi-apply-patch)
 
+## Why apply-patch
+
+Native `edit` fails when the exact match string is off:
+
+![edit tool](docs/assets/edit_tool.png)
+
+`apply_patch` applies the same intent with context matching:
+
+![apply_patch tool](docs/assets/apply_patch_tool.png)
+
 ## Install
 
 Requires Pi >=0.85.1 and Node >=22.
