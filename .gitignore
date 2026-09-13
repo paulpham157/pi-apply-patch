@@ -11,3 +11,6 @@ coverage/
 /pi-smoke-report.json
 .firecrawl
 .pi
+
+# Vitest cache
+.vitest/
