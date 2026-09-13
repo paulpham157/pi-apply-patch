@@ -18,6 +18,13 @@ export const stages = [
 		files: { [source]: "hello patch\n" },
 	},
 	{
+		name: "dry-run",
+		header: `*** Update File: ${source}`,
+		prompt: `Read ${source}, then call apply_patch with the update changing its content to hello universal patch followed by a newline, but pass dryRun true so nothing is written. Read ${source} again to confirm it still contains hello patch. Do not apply the change for real.`,
+		files: { [source]: "hello patch\n" },
+		expectDryRun: true,
+	},
+	{
 		name: "update",
 		header: `*** Update File: ${source}`,
 		prompt: `Read ${source}, change its content to hello universal patch followed by a newline, then read it again.`,
@@ -60,6 +67,32 @@ export function validateTrace(events, stage, provider, model) {
 		);
 	});
 	assert.ok(patch, `No successful apply_patch for ${stage.name}`);
+	if (stage.expectDryRun === true) {
+		const dryCalls = calls.filter(
+			(call) =>
+				call.toolName === "apply_patch" &&
+				succeeded(call) &&
+				typeof call.args === "object" &&
+				call.args !== null &&
+				call.args.dryRun === true,
+		);
+		assert.ok(dryCalls.length, `No successful dry-run apply_patch for ${stage.name}`);
+		assert.ok(
+			dryCalls.some((call) => {
+				const input = typeof call.args === "string" ? call.args : call.args?.input;
+				return typeof input === "string" && input.includes(stage.header);
+			}),
+			`No dry-run apply_patch matching ${stage.header}`,
+		);
+		assert.ok(
+			calls.every((call) => {
+				if (call.toolName !== "apply_patch" || !succeeded(call)) return true;
+				const args = call.args;
+				return typeof args === "object" && args !== null && args.dryRun === true;
+			}),
+			`A non-dry-run apply_patch wrote files during ${stage.name}`,
+		);
+	}
 	const reads = calls.filter((call) => call.toolName === "read" && succeeded(call));
 	assert.ok(reads.length, "No successful read");
 	if (stage.name !== "create")
@@ -157,7 +190,9 @@ async function main() {
 		"Usage: npm run test:pi -- --model provider/exact-model-id [--model provider/id] [--live] [--report path]",
 	);
 	for (const entry of models) assert.match(entry, /^[^/\s]+\/[^\s]+$/, "Use provider/exact-model-id");
-	console.log(`${live ? "LIVE" : "PLAN"}: ${models.join(", ")}; 4 prompts/model; 120s timeout/prompt; sequential.`);
+	console.log(
+		`${live ? "LIVE" : "PLAN"}: ${models.join(", ")}; ${stages.length} prompts/model; 120s timeout/prompt; sequential.`,
+	);
 	if (!live) {
 		console.log("No API calls. Add --live to use your configured Pi credentials (provider charges may apply).");
 		return;
@@ -186,7 +221,7 @@ async function main() {
 						"--no-themes",
 						"--no-context-files",
 						"--tools",
-						"read,edit,write",
+						"read,apply_patch",
 						"-e",
 						path.join(root, "src/index.ts"),
 						"--provider",
