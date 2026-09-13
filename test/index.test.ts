@@ -1282,6 +1282,36 @@ EOF`;
 		expect(dryText).toContain("apply_patch failed.");
 	});
 
+	it("#given dry-run no-op update #when executed #then names the validated file without writing", async () => {
+		// given
+		const directory = await createTempDirectory();
+		await writeFile(path.join(directory, "sample.txt"), "same\n", "utf-8");
+		const patch = `*** Begin Patch
+*** Update File: sample.txt
+@@
+ same
+*** End Patch`;
+		const tool = createApplyPatchTool();
+
+		// when
+		const result = await tool.execute(
+			"apply-patch-dry-run-noop-test",
+			{ input: patch, dryRun: true },
+			undefined,
+			undefined,
+			{ cwd: directory } as never,
+		);
+
+		// then
+		expect(await readFile(path.join(directory, "sample.txt"), "utf-8")).toBe("same\n");
+		const text = result.content
+			.filter((block) => block.type === "text")
+			.map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
+			.join("\n");
+		expect(text).toContain("Dry-run preview");
+		expect(text).toContain("sample.txt");
+	});
+
 	it.each([undefined, false])(
 		"#given dryRun %s #when executed #then applies files unchanged from before",
 		async (dryRun) => {

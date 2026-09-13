@@ -1239,6 +1239,17 @@ function patchFailure(hunk: ParsedPatch, error: unknown): ApplyPatchFailure {
 	return { filePath: hunk.filePath, operation: hunk.type, message, code };
 }
 
+function describePreparedOperation(operation: PreparedOperation): string {
+	const { hunk } = operation;
+	if (hunk.type === "delete") {
+		return `delete: ${hunk.filePath}`;
+	}
+	if (hunk.type === "update" && hunk.movePath !== undefined) {
+		return `move: ${hunk.filePath} -> ${hunk.movePath}`;
+	}
+	return `${hunk.type}: ${hunk.filePath}`;
+}
+
 function pathsOverlap(left: string, right: string): boolean {
 	return left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
 }
@@ -1337,6 +1348,17 @@ async function applyParsedPatchDetailed(
 						total: hunks.length,
 					});
 					if (failures.length > 0) break;
+				}
+			} else if (failures.length === 0 && dryRun) {
+				for (const operation of prepared) {
+					summaries.push(describePreparedOperation(operation));
+					fuzz += operation.fuzz;
+					completed++;
+					await notifyApplyPatchProgress(onProgress, {
+						applied: completed,
+						failed: failures.length,
+						total: hunks.length,
+					});
 				}
 			} else {
 				await notifyApplyPatchProgress(onProgress, { applied: 0, failed: failures.length, total: hunks.length });
