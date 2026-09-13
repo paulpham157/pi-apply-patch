@@ -6,13 +6,14 @@ Repo: [https://github.com/paulpham157/pi-apply-patch](https://github.com/paulpha
 
 ## Why apply-patch
 
-Native `edit` fails when the exact match string is off:
+Native `edit` fails when the exact match string is off, while `apply_patch` applies the same intent with context matching:
 
-![edit tool](docs/assets/edit_tool.png)
-
-`apply_patch` applies the same intent with context matching:
-
-![apply_patch tool](docs/assets/apply_patch_tool.png)
+<table>
+<tr>
+<td><img src="docs/assets/edit_tool.png" width="420" alt="edit tool failing on inexact match" /></td>
+<td><img src="docs/assets/apply_patch_tool.png" width="420" alt="apply_patch applying the same intent" /></td>
+</tr>
+</table>
 
 ## Install
 
