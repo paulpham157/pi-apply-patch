@@ -9,3 +9,5 @@ coverage/
 
 # Local live-model smoke report
 /pi-smoke-report.json
+.firecrawl
+.pi
