@@ -860,70 +860,70 @@ EOF`;
 	it.skipIf(process.platform === "win32")(
 		"#given executable file #when updating content #then preserves executable bit",
 		async () => {
-		// given
-		const directory = await createTempDirectory();
-		const filePath = path.join(directory, "run.sh");
-		await writeFile(filePath, "before\n", "utf-8");
-		await chmod(filePath, 0o755);
-		const patch = `*** Begin Patch
+			// given
+			const directory = await createTempDirectory();
+			const filePath = path.join(directory, "run.sh");
+			await writeFile(filePath, "before\n", "utf-8");
+			await chmod(filePath, 0o755);
+			const patch = `*** Begin Patch
 *** Update File: run.sh
 @@
 -before
 +after
 *** End Patch`;
 
-		// when
-		await applyPatch(directory, patch);
+			// when
+			await applyPatch(directory, patch);
 
-		// then
-		expect(await readFile(filePath, "utf-8")).toBe("after\n");
-		expect((await stat(filePath)).mode & 0o777).toBe(0o755);
+			// then
+			expect(await readFile(filePath, "utf-8")).toBe("after\n");
+			expect((await stat(filePath)).mode & 0o777).toBe(0o755);
 		},
 	);
 
 	it.skipIf(process.platform === "win32")(
 		"#given executable file #when moving without changes #then carries executable bit to destination",
 		async () => {
-		// given
-		const directory = await createTempDirectory();
-		const sourcePath = path.join(directory, "run.sh");
-		const destinationPath = path.join(directory, "renamed.sh");
-		await writeFile(sourcePath, "content\n", "utf-8");
-		await chmod(sourcePath, 0o755);
-		const patch = `*** Begin Patch
+			// given
+			const directory = await createTempDirectory();
+			const sourcePath = path.join(directory, "run.sh");
+			const destinationPath = path.join(directory, "renamed.sh");
+			await writeFile(sourcePath, "content\n", "utf-8");
+			await chmod(sourcePath, 0o755);
+			const patch = `*** Begin Patch
 *** Update File: run.sh
 *** Move to: renamed.sh
 *** End Patch`;
 
-		// when
-		await applyPatch(directory, patch);
+			// when
+			await applyPatch(directory, patch);
 
-		// then
-		expect((await stat(destinationPath)).mode & 0o777).toBe(0o755);
+			// then
+			expect((await stat(destinationPath)).mode & 0o777).toBe(0o755);
 		},
 	);
 
 	it.skipIf(process.platform === "win32")(
 		"#given non-executable file #when updating content #then keeps non-executable mode",
 		async () => {
-		// given
-		const directory = await createTempDirectory();
-		const filePath = path.join(directory, "plain.txt");
-		await writeFile(filePath, "before\n", "utf-8");
-		await chmod(filePath, 0o644);
-		const patch = `*** Begin Patch
+			// given
+			const directory = await createTempDirectory();
+			const filePath = path.join(directory, "plain.txt");
+			await writeFile(filePath, "before\n", "utf-8");
+			await chmod(filePath, 0o644);
+			const patch = `*** Begin Patch
 *** Update File: plain.txt
 @@
 -before
 +after
 *** End Patch`;
 
-		// when
-		await applyPatch(directory, patch);
+			// when
+			await applyPatch(directory, patch);
 
-		// then
-		expect(await readFile(filePath, "utf-8")).toBe("after\n");
-		expect((await stat(filePath)).mode & 0o777).toBe(0o644);
+			// then
+			expect(await readFile(filePath, "utf-8")).toBe("after\n");
+			expect((await stat(filePath)).mode & 0o777).toBe(0o644);
 		},
 	);
 
