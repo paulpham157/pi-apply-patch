@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
@@ -1220,16 +1220,13 @@ async function applyPreparedOperation(
 		await requireAbsent(destination);
 	}
 	await mkdir(path.dirname(destination), { recursive: true });
-	await writeFileAtomic(destination, content);
+	// Apply the preserved mode to the temp file before the atomic rename so
+	// content and permissions become visible together; a chmod failure throws
+	// before the destination is touched.
 	if (hunk.type === "update" && preservedMode !== undefined) {
-		try {
-			await chmod(destination, preservedMode);
-		} catch (error) {
-			const failure = new Error(
-				`Updated ${hunk.filePath} content was written, but file mode could not be preserved: ${error instanceof Error ? error.message : String(error)}`,
-			);
-			throw Object.assign(failure, { code: "EIO" });
-		}
+		await writeFileAtomic(destination, content, undefined, { mode: preservedMode });
+	} else {
+		await writeFileAtomic(destination, content);
 	}
 	if (hunk.type === "update" && hunk.movePath !== undefined) {
 		try {

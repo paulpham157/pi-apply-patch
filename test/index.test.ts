@@ -1141,6 +1141,57 @@ EOF`;
 		expect(files.some((name) => name.includes(".tmp."))).toBe(false);
 	});
 
+	it("#given mode option #when writing atomically #then chmods temp before rename", async () => {
+		// given
+		const calls: string[] = [];
+		const operations = {
+			async writeFile() {
+				calls.push("writeFile");
+			},
+			async chmod() {
+				calls.push("chmod");
+			},
+			async rename() {
+				calls.push("rename");
+			},
+			async unlink() {
+				calls.push("unlink");
+			},
+		};
+
+		// when
+		await writeFileAtomic("/tmp/target.txt", "content", operations, { mode: 0o755 });
+
+		// then
+		expect(calls).toEqual(["writeFile", "chmod", "rename"]);
+	});
+
+	it("#given chmod failure #when writing atomically #then throws before rename", async () => {
+		// given
+		const calls: string[] = [];
+		const operations = {
+			async writeFile() {
+				calls.push("writeFile");
+			},
+			async chmod() {
+				calls.push("chmod");
+				throw Object.assign(new Error("denied"), { code: "EACCES" });
+			},
+			async rename() {
+				calls.push("rename");
+			},
+			async unlink() {
+				calls.push("unlink");
+			},
+		};
+
+		// when / then
+		await expect(writeFileAtomic("/tmp/target.txt", "content", operations, { mode: 0o755 })).rejects.toMatchObject({
+			code: "EACCES",
+		});
+		expect(calls).toEqual(["writeFile", "chmod"]);
+	});
+
 	it("#given eexist on rename #when writing atomically #then retries after unlink", async () => {
 		// given
 		const calls: string[] = [];
@@ -1148,6 +1199,9 @@ EOF`;
 		const operations = {
 			async writeFile() {
 				calls.push("writeFile");
+			},
+			async chmod() {
+				calls.push("chmod");
 			},
 			async rename() {
 				renameCount += 1;
