@@ -1166,6 +1166,7 @@ type PreparedOperation = {
 	destination: string;
 	content?: string;
 	fuzz: number;
+	preservedMode?: number;
 };
 
 async function requireAbsent(filePath: string): Promise<void> {
@@ -1186,24 +1187,26 @@ async function prepareOperation(cwd: string, hunk: ParsedPatch): Promise<Prepare
 		await requireAbsent(absolutePath);
 		return { hunk, absolutePath, destination, content: hunk.content, fuzz: 0 };
 	}
-	if (!(await stat(absolutePath)).isFile()) {
+	const sourceStat = await stat(absolutePath);
+	if (!sourceStat.isFile()) {
 		throw Object.assign(new Error(`Not a regular file: ${hunk.filePath}`), { code: "EISDIR" });
 	}
 	if (hunk.type === "delete") return { hunk, absolutePath, destination, fuzz: 0 };
+	const preservedMode = sourceStat.mode & 0o777;
 	if (hunk.movePath !== undefined) await requireAbsent(destination);
 	const currentContent = await readFile(absolutePath, "utf-8");
 	const result =
 		hunk.chunks.length === 0
 			? { content: currentContent, fuzz: 0 }
 			: replaceChunks(currentContent, hunk.filePath, hunk.chunks);
-	return { hunk, absolutePath, destination, ...result };
+	return { hunk, absolutePath, destination, preservedMode, ...result };
 }
 
 async function applyPreparedOperation(
 	cwd: string,
 	prepared: PreparedOperation,
 ): Promise<{ summary: string; appliedFile: string }> {
-	const { hunk, absolutePath, destination, content } = prepared;
+	const { hunk, absolutePath, destination, content, preservedMode } = prepared;
 	// Recheck paths before writing; external processes are not covered by Pi's queues.
 	await resolvePatchPath(cwd, hunk.filePath);
 	if (hunk.type === "delete") {
@@ -1217,7 +1220,14 @@ async function applyPreparedOperation(
 		await requireAbsent(destination);
 	}
 	await mkdir(path.dirname(destination), { recursive: true });
-	await writeFileAtomic(destination, content);
+	// Apply the preserved mode to the temp file before the atomic rename so
+	// content and permissions become visible together; a chmod failure throws
+	// before the destination is touched.
+	if (hunk.type === "update" && preservedMode !== undefined) {
+		await writeFileAtomic(destination, content, undefined, { mode: preservedMode });
+	} else {
+		await writeFileAtomic(destination, content);
+	}
 	if (hunk.type === "update" && hunk.movePath !== undefined) {
 		try {
 			await rm(absolutePath);

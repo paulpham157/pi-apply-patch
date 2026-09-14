@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -856,6 +856,77 @@ EOF`;
 		expect(result.recoveryInstructions.mustNotReadFiles).toEqual([]);
 	});
 
+	// Windows has no exec bit: chmod(0o755) is a no-op, so mode assertions only run on POSIX.
+	it.skipIf(process.platform === "win32")(
+		"#given executable file #when updating content #then preserves executable bit",
+		async () => {
+			// given
+			const directory = await createTempDirectory();
+			const filePath = path.join(directory, "run.sh");
+			await writeFile(filePath, "before\n", "utf-8");
+			await chmod(filePath, 0o755);
+			const patch = `*** Begin Patch
+*** Update File: run.sh
+@@
+-before
++after
+*** End Patch`;
+
+			// when
+			await applyPatch(directory, patch);
+
+			// then
+			expect(await readFile(filePath, "utf-8")).toBe("after\n");
+			expect((await stat(filePath)).mode & 0o777).toBe(0o755);
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"#given executable file #when moving without changes #then carries executable bit to destination",
+		async () => {
+			// given
+			const directory = await createTempDirectory();
+			const sourcePath = path.join(directory, "run.sh");
+			const destinationPath = path.join(directory, "renamed.sh");
+			await writeFile(sourcePath, "content\n", "utf-8");
+			await chmod(sourcePath, 0o755);
+			const patch = `*** Begin Patch
+*** Update File: run.sh
+*** Move to: renamed.sh
+*** End Patch`;
+
+			// when
+			await applyPatch(directory, patch);
+
+			// then
+			expect((await stat(destinationPath)).mode & 0o777).toBe(0o755);
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"#given non-executable file #when updating content #then keeps non-executable mode",
+		async () => {
+			// given
+			const directory = await createTempDirectory();
+			const filePath = path.join(directory, "plain.txt");
+			await writeFile(filePath, "before\n", "utf-8");
+			await chmod(filePath, 0o644);
+			const patch = `*** Begin Patch
+*** Update File: plain.txt
+@@
+-before
++after
+*** End Patch`;
+
+			// when
+			await applyPatch(directory, patch);
+
+			// then
+			expect(await readFile(filePath, "utf-8")).toBe("after\n");
+			expect((await stat(filePath)).mode & 0o777).toBe(0o644);
+		},
+	);
+
 	it("#given partial patch failure #when applying compat api #then fails fast after first error", async () => {
 		// given
 		const directory = await createTempDirectory();
@@ -1080,6 +1151,57 @@ EOF`;
 		expect(files.some((name) => name.includes(".tmp."))).toBe(false);
 	});
 
+	it("#given mode option #when writing atomically #then chmods temp before rename", async () => {
+		// given
+		const calls: string[] = [];
+		const operations = {
+			async writeFile() {
+				calls.push("writeFile");
+			},
+			async chmod() {
+				calls.push("chmod");
+			},
+			async rename() {
+				calls.push("rename");
+			},
+			async unlink() {
+				calls.push("unlink");
+			},
+		};
+
+		// when
+		await writeFileAtomic("/tmp/target.txt", "content", operations, { mode: 0o755 });
+
+		// then
+		expect(calls).toEqual(["writeFile", "chmod", "rename"]);
+	});
+
+	it("#given chmod failure #when writing atomically #then throws before rename", async () => {
+		// given
+		const calls: string[] = [];
+		const operations = {
+			async writeFile() {
+				calls.push("writeFile");
+			},
+			async chmod() {
+				calls.push("chmod");
+				throw Object.assign(new Error("denied"), { code: "EACCES" });
+			},
+			async rename() {
+				calls.push("rename");
+			},
+			async unlink() {
+				calls.push("unlink");
+			},
+		};
+
+		// when / then
+		await expect(writeFileAtomic("/tmp/target.txt", "content", operations, { mode: 0o755 })).rejects.toMatchObject({
+			code: "EACCES",
+		});
+		expect(calls).toEqual(["writeFile", "chmod"]);
+	});
+
 	it("#given eexist on rename #when writing atomically #then retries after unlink", async () => {
 		// given
 		const calls: string[] = [];
@@ -1087,6 +1209,9 @@ EOF`;
 		const operations = {
 			async writeFile() {
 				calls.push("writeFile");
+			},
+			async chmod() {
+				calls.push("chmod");
 			},
 			async rename() {
 				renameCount += 1;
