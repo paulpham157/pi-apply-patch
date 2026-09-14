@@ -856,7 +856,10 @@ EOF`;
 		expect(result.recoveryInstructions.mustNotReadFiles).toEqual([]);
 	});
 
-	it("#given executable file #when updating content #then preserves executable bit", async () => {
+	// Windows has no exec bit: chmod(0o755) is a no-op, so mode assertions only run on POSIX.
+	it.skipIf(process.platform === "win32")(
+		"#given executable file #when updating content #then preserves executable bit",
+		async () => {
 		// given
 		const directory = await createTempDirectory();
 		const filePath = path.join(directory, "run.sh");
@@ -875,9 +878,12 @@ EOF`;
 		// then
 		expect(await readFile(filePath, "utf-8")).toBe("after\n");
 		expect((await stat(filePath)).mode & 0o777).toBe(0o755);
-	});
+		},
+	);
 
-	it("#given executable file #when moving without changes #then carries executable bit to destination", async () => {
+	it.skipIf(process.platform === "win32")(
+		"#given executable file #when moving without changes #then carries executable bit to destination",
+		async () => {
 		// given
 		const directory = await createTempDirectory();
 		const sourcePath = path.join(directory, "run.sh");
@@ -894,9 +900,12 @@ EOF`;
 
 		// then
 		expect((await stat(destinationPath)).mode & 0o777).toBe(0o755);
-	});
+		},
+	);
 
-	it("#given non-executable file #when updating content #then keeps non-executable mode", async () => {
+	it.skipIf(process.platform === "win32")(
+		"#given non-executable file #when updating content #then keeps non-executable mode",
+		async () => {
 		// given
 		const directory = await createTempDirectory();
 		const filePath = path.join(directory, "plain.txt");
@@ -915,7 +924,8 @@ EOF`;
 		// then
 		expect(await readFile(filePath, "utf-8")).toBe("after\n");
 		expect((await stat(filePath)).mode & 0o777).toBe(0o644);
-	});
+		},
+	);
 
 	it("#given partial patch failure #when applying compat api #then fails fast after first error", async () => {
 		// given
