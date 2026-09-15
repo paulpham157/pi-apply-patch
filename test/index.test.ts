@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	APPLY_PATCH_DESCRIPTION,
 	APPLY_PATCH_LARK_GRAMMAR,
+	ApplyPatchError,
 	type ApplyPatchExtensionAPI,
 	applyPatch,
 	applyPatchDetailed,
@@ -225,6 +226,140 @@ describe("pi-apply-patch", () => {
 
 		// then
 		expect(await readFile(path.join(directory, "sample.txt"), "utf-8")).toBe("after\n");
+	});
+
+	it("#given binary file with null byte #when applying patch #then rejects with EBINARY and preserves file", async () => {
+		// given
+		const directory = await createTempDirectory();
+		const binaryPath = path.join(directory, "binary.bin");
+		await writeFile(binaryPath, Buffer.from([0x00, 0x01, 0x02, 0xff]));
+
+		// when
+		let caught: unknown;
+		try {
+			await applyPatch(
+				directory,
+				`*** Begin Patch
+*** Update File: binary.bin
+@@
+-some
++changed
+*** End Patch`,
+			);
+		} catch (error) {
+			caught = error;
+		}
+
+		// then
+		if (!(caught instanceof ApplyPatchError)) {
+			throw new Error("Expected apply_patch to reject with ApplyPatchError");
+		}
+		const failure = caught.failures[0];
+		expect(failure).toMatchObject({
+			filePath: "binary.bin",
+			operation: "update",
+			code: "EBINARY",
+		});
+		expect(failure?.message ?? "").toMatch(/binary|non-text|not text/);
+		expect(await readFile(binaryPath)).toEqual(Buffer.from([0x00, 0x01, 0x02, 0xff]));
+	});
+
+	it("#given binary file with null byte #when moving with apply_patch then rejects with EBINARY and leaves both paths unchanged", async () => {
+		// given
+		const directory = await createTempDirectory();
+		const sourcePath = path.join(directory, "binary.bin");
+		const destinationPath = path.join(directory, "moved.bin");
+		const original = Buffer.from("before\0after\n");
+		await writeFile(sourcePath, original);
+		const patch = `*** Begin Patch
+*** Update File: binary.bin
+*** Move to: moved.bin
+@@
+-before\0after
++changed
+*** End Patch`;
+
+		// when
+		let caught: unknown;
+		try {
+			await applyPatch(directory, patch);
+		} catch (error) {
+			caught = error;
+		}
+
+		// then
+		if (!(caught instanceof ApplyPatchError)) {
+			throw new Error("Expected apply_patch to reject with ApplyPatchError");
+		}
+		expect(caught.failures[0]).toMatchObject({
+			filePath: "binary.bin",
+			operation: "update",
+			code: "EBINARY",
+		});
+		expect(await readFile(sourcePath)).toEqual(original);
+		await expect(readFile(destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("#given binary file with null byte #when deleting with apply_patch then deletes it", async () => {
+		// given
+		const directory = await createTempDirectory();
+		const binaryPath = path.join(directory, "binary.bin");
+		await writeFile(binaryPath, Buffer.from([0x00, 0x01, 0x02, 0xff]));
+		const patch = `*** Begin Patch
+*** Delete File: binary.bin
+*** End Patch`;
+
+		// when
+		await applyPatch(directory, patch);
+
+		// then
+		await expect(readFile(binaryPath)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("#given binary file with null byte #when apply_patch tool previews then omits text preview and reports EBINARY", async () => {
+		// given
+		const directory = await createTempDirectory();
+		const binaryPath = path.join(directory, "binary.bin");
+		const original = Buffer.from("before\0after\n");
+		await writeFile(binaryPath, original);
+		const patch = `*** Begin Patch
+*** Update File: binary.bin
+@@
+-before\0after
++changed
+*** End Patch`;
+		const updates: Array<{ text: string; update: ApplyPatchUpdate }> = [];
+
+		// when
+		const result = await createApplyPatchTool().execute(
+			"binary-preview-test",
+			{ input: patch },
+			undefined,
+			(update) => {
+				const text = update.content.find((block) => block.type === "text")?.text;
+				if (text) updates.push({ text, update });
+			},
+			{ cwd: directory } as never,
+		);
+
+		// then
+		const initialUpdate = updates[0];
+		if (!initialUpdate) {
+			throw new Error("apply_patch did not emit an initial update");
+		}
+		expect(initialUpdate.text).toBe("Applying patch (0/1)...");
+		expect(initialUpdate.update.details?.preview).toBeUndefined();
+		expect(initialUpdate.text).not.toContain("before\0after");
+		expect(result.details?.preview).toBeUndefined();
+		expect(result.details?.result?.failures[0]).toMatchObject({
+			filePath: "binary.bin",
+			operation: "update",
+			code: "EBINARY",
+		});
+		const resultText = result.content.find((block) => block.type === "text")?.text ?? "";
+		expect(resultText).toContain("Refusing to patch binary file: binary.bin");
+		expect(resultText).not.toContain("MUST read");
+		expect(await readFile(binaryPath)).toEqual(original);
 	});
 
 	it("#given parent traversal path #when applying patch #then rejects outside cwd", async () => {
