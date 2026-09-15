@@ -519,6 +519,18 @@ async function readExistingFileForPreview(absolutePath: string): Promise<string>
 	}
 }
 
+async function readTextFileRejectingBinary(absolutePath: string, filePath: string): Promise<string> {
+	// Sniff for null bytes before decoding: decoding binary as UTF-8 mangles
+	// bytes into replacement characters, so a patch could either match
+	// garbage or silently corrupt the file on write. Reject early with a
+	// distinct code instead of letting apply_patch guess at binary content.
+	const raw = await readFile(absolutePath);
+	if (raw.includes(0)) {
+		throw Object.assign(new Error(`Refusing to patch binary file: ${filePath}`), { code: "EBINARY" });
+	}
+	return raw.toString("utf-8");
+}
+
 function formatLineCountSummary(added: number, removed: number): string {
 	return `(+${added} -${removed})`;
 }
@@ -916,7 +928,7 @@ async function createPatchPreview(cwd: string, hunks: ParsedPatch[]): Promise<Ap
 			continue;
 		}
 
-		const oldContent = await readFile(absolutePath, "utf-8");
+		const oldContent = await readTextFileRejectingBinary(absolutePath, hunk.filePath);
 		const newContent =
 			hunk.chunks.length === 0 ? oldContent : replaceChunks(oldContent, hunk.filePath, hunk.chunks).content;
 		if (hunk.movePath) {
@@ -1194,15 +1206,7 @@ async function prepareOperation(cwd: string, hunk: ParsedPatch): Promise<Prepare
 	if (hunk.type === "delete") return { hunk, absolutePath, destination, fuzz: 0 };
 	const preservedMode = sourceStat.mode & 0o777;
 	if (hunk.movePath !== undefined) await requireAbsent(destination);
-	// Sniff for null bytes before decoding: decoding binary as UTF-8 mangles
-	// bytes into replacement characters, so a patch could either match
-	// garbage or silently corrupt the file on write. Reject early with a
-	// distinct code instead of letting apply_patch guess at binary content.
-	const raw = await readFile(absolutePath);
-	if (raw.includes(0)) {
-		throw Object.assign(new Error(`Refusing to patch binary file: ${hunk.filePath}`), { code: "EBINARY" });
-	}
-	const currentContent = raw.toString("utf-8");
+	const currentContent = await readTextFileRejectingBinary(absolutePath, hunk.filePath);
 	const result =
 		hunk.chunks.length === 0
 			? { content: currentContent, fuzz: 0 }
