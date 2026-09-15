@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	APPLY_PATCH_DESCRIPTION,
 	APPLY_PATCH_LARK_GRAMMAR,
+	ApplyPatchError,
 	type ApplyPatchExtensionAPI,
 	applyPatch,
 	applyPatchDetailed,
@@ -225,6 +226,40 @@ describe("pi-apply-patch", () => {
 
 		// then
 		expect(await readFile(path.join(directory, "sample.txt"), "utf-8")).toBe("after\n");
+	});
+
+	it("#given binary file with null byte #when applying patch #then rejects with EBINARY and preserves file", async () => {
+		// given
+		const directory = await createTempDirectory();
+		const binaryPath = path.join(directory, "binary.bin");
+		await writeFile(binaryPath, Buffer.from([0x00, 0x01, 0x02, 0xff]));
+
+		// when
+		let caught: unknown;
+		try {
+			await applyPatch(
+				directory,
+				`*** Begin Patch
+*** Update File: binary.bin
+@@
+-some
++changed
+*** End Patch`,
+			);
+		} catch (error) {
+			caught = error;
+		}
+
+		// then
+		expect(caught).toBeInstanceOf(ApplyPatchError);
+		const failure = (caught as ApplyPatchError).failures[0];
+		expect(failure).toMatchObject({
+			filePath: "binary.bin",
+			operation: "update",
+			code: "EBINARY",
+		});
+		expect(failure?.message ?? "").toMatch(/binary|non-text|not text/);
+		expect(await readFile(binaryPath)).toEqual(Buffer.from([0x00, 0x01, 0x02, 0xff]));
 	});
 
 	it("#given parent traversal path #when applying patch #then rejects outside cwd", async () => {

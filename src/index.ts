@@ -1194,7 +1194,15 @@ async function prepareOperation(cwd: string, hunk: ParsedPatch): Promise<Prepare
 	if (hunk.type === "delete") return { hunk, absolutePath, destination, fuzz: 0 };
 	const preservedMode = sourceStat.mode & 0o777;
 	if (hunk.movePath !== undefined) await requireAbsent(destination);
-	const currentContent = await readFile(absolutePath, "utf-8");
+	// Sniff for null bytes before decoding: decoding binary as UTF-8 mangles
+	// bytes into replacement characters, so a patch could either match
+	// garbage or silently corrupt the file on write. Reject early with a
+	// distinct code instead of letting apply_patch guess at binary content.
+	const raw = await readFile(absolutePath);
+	if (raw.includes(0)) {
+		throw Object.assign(new Error(`Refusing to patch binary file: ${hunk.filePath}`), { code: "EBINARY" });
+	}
+	const currentContent = raw.toString("utf-8");
 	const result =
 		hunk.chunks.length === 0
 			? { content: currentContent, fuzz: 0 }
