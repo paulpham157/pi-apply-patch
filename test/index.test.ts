@@ -251,8 +251,10 @@ describe("pi-apply-patch", () => {
 		}
 
 		// then
-		expect(caught).toBeInstanceOf(ApplyPatchError);
-		const failure = (caught as ApplyPatchError).failures[0];
+		if (!(caught instanceof ApplyPatchError)) {
+			throw new Error("Expected apply_patch to reject with ApplyPatchError");
+		}
+		const failure = caught.failures[0];
 		expect(failure).toMatchObject({
 			filePath: "binary.bin",
 			operation: "update",
