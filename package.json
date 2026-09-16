@@ -47,14 +47,14 @@
 		"typebox": "*"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.12",
+		"@biomejs/biome": "2.5.13",
 		"@semantic-release/commit-analyzer": "13.0.1",
 		"@semantic-release/github": "12.0.9",
 		"@semantic-release/npm": "13.1.5",
 		"@semantic-release/release-notes-generator": "14.1.1",
 		"@types/node": "^26.4.1",
 		"@typescript/native-preview": "^7.0.0-dev.20260707.2",
-		"conventional-changelog-conventionalcommits": "8.0.0",
+		"conventional-changelog-conventionalcommits": "10.4.0",
 		"semantic-release": "25.0.9",
 		"typescript": "7.0.2",
 		"vitest": "^5.0.0"
