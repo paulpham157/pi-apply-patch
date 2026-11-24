@@ -28,7 +28,11 @@
 				"strict_required_status_checks_policy": true,
 				"required_status_checks": [
 					{ "context": "test (ubuntu-latest · node 22)" },
-					{ "context": "test (macos-latest · node 22)" }
+					{ "context": "test (ubuntu-latest · node 24)" },
+					{ "context": "test (macos-latest · node 22)" },
+					{ "context": "test (macos-latest · node 24)" },
+					{ "context": "test (windows-latest · node 22)" },
+					{ "context": "test (windows-latest · node 24)" }
 				]
 			}
 		}

@@ -12,6 +12,7 @@ import {
 import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import * as Diff from "diff";
 import { Type } from "typebox";
+import { type ContextLineIndex, type LineReplacement, replacementsAroundContext, SourceText } from "./line-endings.js";
 import { writeFileAtomic } from "./write-file-atomic.js";
 
 const APPLY_PATCH_PARAMS = Type.Object({
@@ -34,6 +35,7 @@ type PatchChunk = {
 	changeContexts: string[];
 	oldLines: string[];
 	newLines: string[];
+	contextLineIndices: ContextLineIndex[];
 	isEndOfFile: boolean;
 };
 
@@ -461,10 +463,35 @@ function seekSequence(
 	return undefined;
 }
 
+const FILE_HEADER_MARKERS = [
+	["add", "*** Add File: "],
+	["delete", "*** Delete File: "],
+	["update", "*** Update File: "],
+] as const;
+const MOVE_TO_MARKER = "*** Move to: ";
+
+// The parser and extractPatchedPaths both read headers through these two functions, so they share one
+// whitespace definition (String.prototype.trim): any path the parser writes is a path consumers that
+// gate writes per file (permission prompts) see, spelled the same way.
+function parseFileHeader(line: string): { kind: ParsedPatch["type"]; path: string } | undefined {
+	const trimmed = line.trim();
+	for (const [kind, marker] of FILE_HEADER_MARKERS) {
+		if (trimmed.startsWith(marker)) return { kind, path: trimmed.slice(marker.length) };
+	}
+	return undefined;
+}
+
+function parseMoveTo(line: string): string | undefined {
+	const trimmed = line.trimEnd();
+	return trimmed.startsWith(MOVE_TO_MARKER) ? trimmed.slice(MOVE_TO_MARKER.length) : undefined;
+}
+
 export function extractPatchedPaths(patchText: string): string[] {
-	const normalized = stripHeredoc(normalizePatchText(patchText));
-	const matches = normalized.matchAll(/^\*\*\* (?:(?:Add|Delete|Update) File|Move to): (.+)$/gm);
-	return Array.from(matches, (match) => match[1] ?? "");
+	const lines = stripHeredoc(normalizePatchText(patchText)).split("\n");
+	return lines.flatMap((line) => {
+		const path = parseFileHeader(line)?.path ?? parseMoveTo(line.trimStart());
+		return path === undefined ? [] : [path];
+	});
 }
 
 function createPatchDiff(oldContent: string, newContent: string): { diff: string; added: number; removed: number } {
@@ -960,19 +987,22 @@ function parsePatch(patchText: string): ParsedPatch[] {
 	const hunks: ParsedPatch[] = [];
 	let index = beginIndex + 1;
 	while (index < endIndex) {
-		const line = lines[index] ?? "";
-		if (line.trim() === "") {
+		// Like Codex, file headers are recognized after trimming, and any other non-blank line between file
+		// sections is rejected below; skipping it would silently drop the section it introduces.
+		const line = (lines[index] ?? "").trim();
+		if (line === "") {
 			index++;
 			continue;
 		}
+		const header = parseFileHeader(line);
 
-		if (line.startsWith("*** Add File: ")) {
-			const filePath = line.slice("*** Add File: ".length);
+		if (header?.kind === "add") {
+			const filePath = header.path;
 			index++;
 			const contentLines: string[] = [];
 			while (index < endIndex) {
 				const nextLine = lines[index] ?? "";
-				if (nextLine.startsWith("*** ")) {
+				if (nextLine.trim().startsWith("*** ")) {
 					break;
 				}
 				if (!nextLine.startsWith("+")) {
@@ -991,18 +1021,19 @@ function parsePatch(patchText: string): ParsedPatch[] {
 			continue;
 		}
 
-		if (line.startsWith("*** Delete File: ")) {
-			hunks.push({ type: "delete", filePath: line.slice("*** Delete File: ".length) });
+		if (header?.kind === "delete") {
+			hunks.push({ type: "delete", filePath: header.path });
 			index++;
 			continue;
 		}
 
-		if (line.startsWith("*** Update File: ")) {
-			const filePath = line.slice("*** Update File: ".length);
+		if (header?.kind === "update") {
+			const filePath = header.path;
 			index++;
 			let movePath: string | undefined;
-			if ((lines[index] ?? "").startsWith("*** Move to: ")) {
-				movePath = (lines[index] ?? "").slice("*** Move to: ".length);
+			const moveTo = parseMoveTo(lines[index] ?? "");
+			if (moveTo !== undefined) {
+				movePath = moveTo;
 				index++;
 			}
 
@@ -1039,6 +1070,7 @@ function parsePatch(patchText: string): ParsedPatch[] {
 
 				const oldLines: string[] = [];
 				const newLines: string[] = [];
+				const contextLineIndices: ContextLineIndex[] = [];
 				let isEndOfFile = false;
 				let parsedLines = 0;
 				while (index < endIndex) {
@@ -1057,9 +1089,11 @@ function parsePatch(patchText: string): ParsedPatch[] {
 					const prefix = hunkLine[0];
 					const value = hunkLine.slice(1);
 					if (prefix === undefined) {
+						contextLineIndices.push([oldLines.length, newLines.length]);
 						oldLines.push("");
 						newLines.push("");
 					} else if (prefix === " ") {
+						contextLineIndices.push([oldLines.length, newLines.length]);
 						oldLines.push(value);
 						newLines.push(value);
 					} else if (prefix === "-") {
@@ -1078,7 +1112,7 @@ function parsePatch(patchText: string): ParsedPatch[] {
 				if (parsedLines === 0) {
 					throw new PatchParseError("Update hunk does not contain any lines");
 				}
-				chunks.push({ changeContexts, oldLines, newLines, isEndOfFile });
+				chunks.push({ changeContexts, oldLines, newLines, contextLineIndices, isEndOfFile });
 			}
 			if (chunks.length === 0 && !movePath) {
 				throw new PatchParseError(`Update file hunk for path '${filePath}' is empty`);
@@ -1113,17 +1147,10 @@ function parseNonEmptyPatch(patchText: string): ParsedPatch[] {
 	throw new PatchParseError("apply_patch verification failed: no hunks found");
 }
 
-function splitFileLines(content: string): string[] {
-	const lines = normalizePatchText(content).split("\n");
-	if (lines[lines.length - 1] === "") {
-		lines.pop();
-	}
-	return lines;
-}
-
 function replaceChunks(content: string, filePath: string, chunks: PatchChunk[]): { content: string; fuzz: number } {
-	const originalLines = splitFileLines(content);
-	const replacements: { start: number; oldLength: number; newLines: string[] }[] = [];
+	const source = SourceText.parse(content);
+	const originalLines = source.texts;
+	const replacements: LineReplacement[] = [];
 	let lineIndex = 0;
 	let fuzz = 0;
 
@@ -1160,16 +1187,13 @@ function replaceChunks(content: string, filePath: string, chunks: PatchChunk[]):
 		}
 
 		fuzz += foundAt.fuzz;
-		replacements.push({ start: foundAt.index, oldLength: pattern.length, newLines });
+		replacements.push(
+			...replacementsAroundContext(foundAt.index, pattern.length, newLines, chunk.contextLineIndices),
+		);
 		lineIndex = foundAt.index + pattern.length;
 	}
 
-	const nextLines = [...originalLines];
-	for (const replacement of replacements.sort((left, right) => right.start - left.start)) {
-		nextLines.splice(replacement.start, replacement.oldLength, ...replacement.newLines);
-	}
-	nextLines.push("");
-	return { content: nextLines.join("\n"), fuzz };
+	return { content: source.replace(replacements), fuzz };
 }
 
 type PreparedOperation = {
