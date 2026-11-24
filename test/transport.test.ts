@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import { type Model, normalizeContext } from "@earendil-works/pi-ai";
 import { stream as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { stream as streamGoogle } from "@earendil-works/pi-ai/api/google-generative-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-responses";
@@ -29,10 +29,10 @@ it.each([true, false])(
 		});
 		const result = await stream(
 			model,
-			{
+			normalizeContext({
 				messages: [{ role: "user", content: "Create a file", timestamp: 0 }],
 				tools: [createApplyPatchTool()],
-			},
+			}),
 			{
 				apiKey: "test-only",
 				fetch,
@@ -76,10 +76,10 @@ it.each(["anthropic-messages", "google-generative-ai"] as const)(
 			contextWindow: 4096,
 			maxTokens: 128,
 		};
-		const context = {
+		const context = normalizeContext({
 			messages: [{ role: "user" as const, content: "Create a file", timestamp: 0 }],
 			tools: [createApplyPatchTool()],
-		};
+		});
 		let captured: unknown;
 		const fetch = vi.fn<typeof globalThis.fetch>(() => {
 			throw new Error("Network is forbidden in this test");

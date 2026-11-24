@@ -50,10 +50,10 @@ function createToolsetTestApi(initialActiveTools: string[]): {
 		on(...args: unknown[]) {
 			const eventName = args[0];
 			const handler = args[1];
-			if (typeof eventName !== "string" || !isToolsetHandler(handler)) {
-				return;
+			if (typeof eventName === "string" && isToolsetHandler(handler)) {
+				handlers.set(eventName, [...(handlers.get(eventName) ?? []), handler]);
 			}
-			handlers.set(eventName, [...(handlers.get(eventName) ?? []), handler]);
+			return () => {};
 		},
 		getActiveTools() {
 			return [...activeTools];
@@ -111,7 +111,9 @@ describe("pi-apply-patch", () => {
 				capturedDescription = tool.description;
 				capturedSampling = tool.constrainedSampling;
 			},
-			on() {},
+			on() {
+				return () => {};
+			},
 			getActiveTools() {
 				return ["read", "write", "edit"];
 			},

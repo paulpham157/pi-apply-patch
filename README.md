@@ -17,10 +17,11 @@ Native `edit` fails when the exact match string is off, while `apply_patch` appl
 
 ## Install
 
-Requires Pi >=0.85.1 and Node >=22.
+Requires Pi >=0.87.1 and Node >=22.
 
 ```bash
 pi install npm:@paulpham157/apply-patch
+pi install git:github.com/paulpham157/pi-apply-patch
 ```
 
 If Pi is running, use `/reload`. The extension activates automatically and keeps working across model switches.
